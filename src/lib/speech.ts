@@ -1,4 +1,5 @@
 import { getSettings } from './storage';
+import { capNow, inArtifact } from './platform';
 
 let voices: SpeechSynthesisVoice[] = [];
 function loadVoices() {
@@ -15,11 +16,26 @@ export function germanVoices(): SpeechSynthesisVoice[] {
   return voices.filter((v) => v.lang.toLowerCase().startsWith('de'));
 }
 
-export const ttsSupported = () => typeof speechSynthesis !== 'undefined';
+const browserTts = () => typeof speechSynthesis !== 'undefined';
+export const ttsSupported = () => browserTts() || !!capNow('tts');
+
+/** Голос Claude (capability tts), если в браузере нет немецкого голоса */
+function claudeTts(): any {
+  const t = capNow('tts');
+  if (!t) return null;
+  if (!browserTts()) return t;
+  return germanVoices().length ? null : t;
+}
 
 export function speak(text: string, opts: { rate?: number; lang?: string; onEnd?: () => void } = {}) {
-  if (!ttsSupported()) { opts.onEnd?.(); return; }
   const s = getSettings();
+  const ct = claudeTts();
+  if (ct) {
+    const rate = Math.min(1.5, Math.max(0.7, (opts.rate ?? 1) * s.speechRate));
+    ct.speak(text, { language: (opts.lang || 'de-DE').slice(0, 2), rate }).then(() => opts.onEnd?.(), () => opts.onEnd?.());
+    return;
+  }
+  if (!browserTts()) { opts.onEnd?.(); return; }
   speechSynthesis.cancel();
   const u = new SpeechSynthesisUtterance(text);
   u.lang = opts.lang || 'de-DE';
@@ -35,13 +51,16 @@ export function speak(text: string, opts: { rate?: number; lang?: string; onEnd?
 }
 
 export function stopSpeaking() {
-  if (ttsSupported()) speechSynthesis.cancel();
+  if (browserTts()) speechSynthesis.cancel();
+  try { capNow('tts')?.stop(); } catch {}
 }
 
 /* ---------- Распознавание речи (Web Speech API) ---------- */
 type SR = any;
-const SRClass: any = typeof window !== 'undefined' ? (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition : null;
-export const sttSupported = () => !!SRClass;
+const SRClassRaw: any = typeof window !== 'undefined' ? (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition : null;
+// В артефакте микрофон браузера закрыт — там используется диктовка Claude
+const SRClass: any = inArtifact() ? null : SRClassRaw;
+export const sttSupported = () => !!SRClass || !!capNow('dictation');
 
 export interface Listener { stop: () => void }
 
@@ -51,6 +70,8 @@ export function listen(handlers: {
   onError?: (msg: string) => void;
   continuous?: boolean;
 }): Listener | null {
+  const d = capNow('dictation');
+  if (d) return listenDictation(d, handlers);
   if (!SRClass) { handlers.onError?.('Распознавание речи не поддерживается этим браузером. Используйте Chrome или Edge.'); return null; }
   const rec: SR = new SRClass();
   rec.lang = 'de-DE';
@@ -80,4 +101,40 @@ export function listen(handlers: {
   rec.onend = () => handlers.onEnd?.();
   try { rec.start(); } catch { /* уже запущено */ }
   return { stop: () => { try { rec.stop(); } catch {} } };
+}
+
+/** Диктовка Claude (capability dictation). start() вызывается синхронно из клика. */
+function listenDictation(d: any, h: Parameters<typeof listen>[0]): Listener {
+  let finalText = '';
+  let lastPartial = '';
+  let ended = false;
+  const offs: (() => void)[] = [];
+  const finish = () => {
+    if (ended) return;
+    ended = true;
+    const text = (finalText || lastPartial).trim();
+    if (text) h.onResult(text, [], true);
+    offs.forEach((f) => { try { f(); } catch {} });
+    h.onEnd?.();
+  };
+  offs.push(d.onPartial(({ text }: { text: string }) => { lastPartial = text; h.onResult((finalText + ' ' + text).trim(), [], false); }));
+  offs.push(d.onFinal(({ text }: { text: string }) => { finalText = (finalText + ' ' + text).trim(); lastPartial = ''; h.onResult(finalText, [], false); }));
+  offs.push(d.onState(({ state, reason }: { state: string; reason?: string }) => {
+    if (state === 'idle') {
+      if (reason === 'not_granted') h.onError?.('Доступ к диктовке не разрешён. Его можно включить в меню разрешений артефакта.');
+      finish();
+    }
+  }));
+  d.start({ language: 'de-DE' }).catch((e: any) => {
+    const map: Record<string, string> = {
+      not_granted: 'Вы не разрешили диктовку. Можно отвечать текстом.',
+      dismissed: 'Запрос на диктовку закрыт — нажмите микрофон ещё раз.',
+      no_gesture: 'Нажмите на микрофон ещё раз.',
+      unavailable: 'Диктовка здесь недоступна (работает в Chrome/Edge и приложении Claude для компьютера).',
+      rate_limited: 'Слишком много запросов диктовки — подождите немного.',
+    };
+    h.onError?.(map[e?.code] || 'Ошибка диктовки: ' + (e?.message || e));
+    finish();
+  });
+  return { stop: () => { d.stop().catch(() => {}).finally(finish); } };
 }

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { cap } from './platform';
 
 export interface Settings {
   apiKey: string;
@@ -37,6 +38,7 @@ export interface Progress {
   chats: number;
   spoken: number; // успешные голосовые ответы
   mistakes: { de: string; ru: string; at: number }[];
+  updatedAt?: number;
 }
 
 const EMPTY: Progress = { xp: 0, lessons: {}, srs: {}, daily: {}, streak: 0, lastDay: '', chats: 0, spoken: 0, mistakes: [] };
@@ -63,20 +65,92 @@ export const getSettings = () => settings;
 export const getProgress = () => progress;
 
 export function saveSettings(p: Partial<Settings>) {
-  settings = { ...settings, ...p };
+  settings = { ...settings, ...p, };
   write(KS, settings);
+  markChanged();
   emit();
 }
 export function updateProgress(fn: (p: Progress) => Progress | void) {
   const copy: Progress = JSON.parse(JSON.stringify(progress));
   progress = fn(copy) || copy;
   write(KP, progress);
+  markChanged();
   emit();
 }
 export function resetProgress() {
   progress = { ...EMPTY, lessons: {}, srs: {}, daily: {}, mistakes: [] };
   write(KP, progress);
+  markChanged();
   emit();
+}
+
+/* ---------- Синхронизация с аккаунтом Claude (capability db) ---------- */
+// Настройки, которые относятся к устройству, не синхронизируются.
+const LOCAL_ONLY: (keyof Settings)[] = ['apiKey', 'endpoint', 'voiceURI'];
+const KU = 'dw.updatedAt.v1';
+let localUpdatedAt = Number((() => { try { return localStorage.getItem(KU); } catch { return 0; } })() || 0);
+let docRef: any = null;
+let pushTimer: any = null;
+let pushing = false;
+let pendingPush = false;
+export type SyncState = 'off' | 'connecting' | 'synced' | 'saving' | 'error';
+let syncState: SyncState = 'off';
+export const getSyncState = () => syncState;
+const setSync = (s: SyncState) => { syncState = s; emit(); };
+
+function markChanged() {
+  localUpdatedAt = Date.now();
+  try { localStorage.setItem(KU, String(localUpdatedAt)); } catch {}
+  schedulePush();
+}
+function schedulePush() {
+  if (!docRef) return;
+  clearTimeout(pushTimer);
+  pushTimer = setTimeout(push, 1500);
+}
+async function push() {
+  if (!docRef) return;
+  if (pushing) { pendingPush = true; return; }
+  pushing = true; setSync('saving');
+  const shared: Partial<Settings> = { ...settings };
+  for (const k of LOCAL_ONLY) delete shared[k];
+  try {
+    await docRef.set({ progress, settings: shared, updatedAt: localUpdatedAt });
+    setSync('synced');
+  } catch { setSync('error'); }
+  pushing = false;
+  if (pendingPush) { pendingPush = false; push(); }
+}
+
+export async function startSync() {
+  const [db, user] = await Promise.all([cap<any>('db'), cap<any>('user')]);
+  if (!db || !user) return;
+  setSync('connecting');
+  let id: string | null = null;
+  try { id = await user.id(); } catch {}
+  if (!id) { setSync('off'); return; }
+  docRef = db.doc(`data/users/${id}/state`);
+  const timeout = setTimeout(() => { if (syncState === 'connecting') setSync('error'); }, 10000);
+  let first = true;
+  docRef.onSnapshot((snap: any) => {
+    clearTimeout(timeout);
+    const remote = snap.exists ? snap.data() : null;
+    const rAt = Number(remote?.updatedAt || 0);
+    if (remote && rAt > localUpdatedAt) {
+      progress = { ...EMPTY, ...(remote.progress || {}) };
+      const keep: Partial<Settings> = {};
+      for (const k of LOCAL_ONLY) (keep as any)[k] = settings[k];
+      settings = { ...DEFAULT_SETTINGS, ...(remote.settings || {}), ...keep };
+      localUpdatedAt = rAt;
+      write(KP, progress); write(KS, settings);
+      try { localStorage.setItem(KU, String(rAt)); } catch {}
+      setSync('synced');
+      emit();
+    } else if (first && (!remote || rAt < localUpdatedAt)) {
+      push();
+    } else setSync('synced');
+    first = false;
+  }, () => { clearTimeout(timeout); setSync('error'); });
 }
 export function exportProgress(): string { return JSON.stringify(progress); }
 export function importProgress(json: string) {

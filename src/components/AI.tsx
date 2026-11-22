@@ -4,10 +4,20 @@ import { aiConfigured, AiError, chat, chatJson, TUTOR_BASE, type ChatMsg } from 
 import { listen, speak, stopSpeaking, sttSupported, type Listener } from '../lib/speech';
 import { addXp, getSettings, saveSettings, updateProgress, useStore } from '../lib/storage';
 import { MdBlock, Spinner, UmlautBar } from './ui';
+import { cap, inArtifact } from '../lib/platform';
 import type { Ex } from '../lib/exercises';
 import { shuffle } from '../lib/text';
 
 export function NeedKey({ go }: { go: () => void }) {
+  if (inArtifact()) {
+    return (
+      <div className="card warn-card">
+        <h3>🤖 ИИ пока недоступен</h3>
+        <p>Разговоры, проверка письма и новые задания работают через встроенного ИИ Claude. Если вы отклонили запрос доступа, откройте меню разрешений артефакта и разрешите его, затем перезагрузите страницу. ИИ доступен, когда вы вошли в свой аккаунт Claude.</p>
+        <button className="btn" onClick={() => { cap<any>('permissions').then((p) => p?.manage?.()).catch(() => {}); }}>Открыть разрешения</button>
+      </div>
+    );
+  }
   return (
     <div className="card warn-card">
       <h3>🔑 Нужен ключ Grok</h3>

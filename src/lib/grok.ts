@@ -1,10 +1,44 @@
 import { getSettings } from './storage';
+import { capNow, inArtifact } from './platform';
 
 export interface ChatMsg { role: 'system' | 'user' | 'assistant'; content: string }
 
 export class AiError extends Error {}
 
+/** Превращает историю сообщений в вход для Claude (там нет system-роли). */
+function toSampleInput(messages: ChatMsg[]): { role: 'user' | 'assistant'; content: string }[] {
+  const system = messages.filter((m) => m.role === 'system').map((m) => m.content).join('\n\n');
+  const rest = messages.filter((m) => m.role !== 'system') as { role: 'user' | 'assistant'; content: string }[];
+  const out: { role: 'user' | 'assistant'; content: string }[] = [];
+  const preface = system ? 'ИНСТРУКЦИИ (следуй им всегда):\n' + system + '\n\n---\n' : '';
+  if (!rest.length || rest[0].role !== 'user') out.push({ role: 'user', content: preface + '(Начало разговора.)' });
+  for (const m of rest) {
+    const prev = out[out.length - 1];
+    if (prev && prev.role === m.role) prev.content += '\n\n' + m.content;
+    else out.push({ ...m, content: !out.length ? preface + m.content : m.content });
+  }
+  if (out[out.length - 1].role !== 'user') out.push({ role: 'user', content: '(Продолжай.)' });
+  return out;
+}
+
+async function chatClaude(sample: any, messages: ChatMsg[], opts: { json?: boolean }): Promise<string> {
+  const input = toSampleInput(messages);
+  if (opts.json) input[input.length - 1].content += '\n\nОтветь ТОЛЬКО валидным JSON-объектом, без пояснений и без ```.';
+  try {
+    const r = await sample(input, { cache: false, modelTier: 'default' });
+    return r.text;
+  } catch (e: any) {
+    const map: Record<string, string> = {
+      not_granted: 'Доступ к ИИ не разрешён. Разрешите его в меню разрешений артефакта и попробуйте снова.',
+      rate_limited: 'Слишком много запросов к ИИ. Подождите минуту и попробуйте снова.',
+    };
+    throw new AiError(map[e?.code] || 'Ошибка ИИ: ' + (e?.message || String(e)));
+  }
+}
+
 export async function chat(messages: ChatMsg[], opts: { json?: boolean; temperature?: number; maxTokens?: number } = {}): Promise<string> {
+  const sample = capNow('sample');
+  if (sample) return chatClaude(sample, messages, opts);
   const s = getSettings();
   const direct = /^https?:/.test(s.endpoint);
   if (direct && !s.apiKey) throw new AiError('Для прямого подключения нужен API-ключ Grok (Настройки → ИИ).');
@@ -53,7 +87,11 @@ export async function chatJson<T = any>(messages: ChatMsg[], opts: { temperature
   return parseJson<T>(out);
 }
 
+export const aiProvider = () => (capNow('sample') ? 'claude' : 'grok');
+
 export const aiConfigured = () => {
+  if (capNow('sample')) return true;
+  if (inArtifact()) return false;
   const s = getSettings();
   return !!s.apiKey || !/^https?:/.test(s.endpoint);
 };

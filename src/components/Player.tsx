@@ -20,6 +20,7 @@ export function Player({ title, items, onExit, onFinish, level }: {
   const [combo, setCombo] = useState(0);
   const [explain, setExplain] = useState<string | null>(null);
   const [loadingExp, setLoadingExp] = useState(false);
+  const [askExit, setAskExit] = useState(false);
   const stats = useRef<RunStats>({ total: 0, correct: 0, mistakes: 0, spoken: 0 });
   const retried = useRef(new Set<Ex>());
   const ex = queue[i];
@@ -81,11 +82,21 @@ export function Player({ title, items, onExit, onFinish, level }: {
   return (
     <div className="player">
       <div className="player-top">
-        <button className="icon-btn" onClick={() => { if (confirm('Выйти из урока? Прогресс этого прохождения не сохранится.')) onExit(); }}>✕</button>
+        <button className="icon-btn" aria-label="Выйти" onClick={() => setAskExit(true)}>✕</button>
         <div className="bar"><div className="bar-fill" style={{ width: progress + '%' }} /></div>
         {combo >= 3 && <div className="combo">🔥 {combo}</div>}
       </div>
       <div className="player-title muted">{title}</div>
+      {askExit && (
+        <div className="exit-confirm card">
+          <b>Выйти из урока?</b>
+          <span className="muted small">Результат этого прохождения не сохранится.</span>
+          <div className="row-btns">
+            <button className="btn" onClick={() => setAskExit(false)}>Остаться</button>
+            <button className="btn danger" onClick={onExit}>Выйти</button>
+          </div>
+        </div>
+      )}
       <div className="player-body" key={i}>
         {ex.t === 'grammar' && <GrammarCard ex={ex} {...P} />}
         {ex.t === 'flash' && <Flash ex={ex} {...P} />}

@@ -8,7 +8,9 @@ import { AskTutor, generateExercises, NeedKey, Roleplay, Story, Writing } from '
 import { GAMES, gameBest } from './components/Games';
 import { AudioBtn, Spinner, WordView } from './components/ui';
 import { germanVoices, speak, sttSupported, ttsSupported } from './lib/speech';
-import { aiConfigured, chat } from './lib/grok';
+import { aiConfigured, aiProvider, chat } from './lib/grok';
+import { inArtifact, preloadCaps } from './lib/platform';
+import { getSyncState, startSync } from './lib/storage';
 
 type Route =
   | { n: 'home' }
@@ -40,10 +42,12 @@ export default function App() {
   const [route, setRoute] = useState<Route>({ n: 'home' });
   const { progress, settings } = useStore();
   const go = (r: Route) => { setRoute(r); window.scrollTo(0, 0); };
+  const [, setCapsReady] = useState(0);
+  useEffect(() => { preloadCaps(() => setCapsReady((x) => x + 1)); startSync(); }, []);
   useEffect(() => { document.body.classList.toggle('in-player', route.n === 'play'); }, [route.n]);
 
   const startPlay = (title: string, items: Ex[], back: Route, lessonId?: string, full?: boolean, level?: string) => {
-    if (!items.length) { alert('Пока нет заданий для этого режима.'); return; }
+    if (!items.length) return;
     go({ n: 'play', title, items, back, lessonId, full, level });
   };
 
@@ -385,7 +389,7 @@ function Talk({ go }: { go: (r: Route) => void }) {
       <div className="card">
         <h3>Ваш уровень для свободных сценариев</h3>
         <div className="seg">{(['A1', 'A2', 'B1', 'B2'] as Level[]).map((lv) => <button key={lv} className={level === lv ? 'active' : ''} onClick={() => setLevel(lv)}>{lv}</button>)}</div>
-        {!sttSupported() && <p className="warn small">Голосовой ввод недоступен в этом браузере — используйте Chrome/Edge (или пишите текстом).</p>}
+        {!sttSupported() && <p className="warn small">Голосовой ввод здесь недоступен (работает в Chrome/Edge и в приложении Claude на компьютере) — отвечайте текстом, озвучка ответов работает.</p>}
       </div>
       <button className="card tutor-cta" onClick={() => go({ n: 'tutor', back })}>👩‍🏫 <b>Спросить учителя</b> — любые вопросы о грамматике и словах на русском</button>
       <h3 className="section-title">Свободные сценарии</h3>
@@ -429,6 +433,8 @@ function GamesPage({ go }: { go: (r: Route) => void }) {
 function Profile({ go }: { go: (r: Route) => void }) {
   const { progress, settings } = useStore();
   const [test, setTest] = useState('');
+  const [msg, setMsg] = useState('');
+  const [askReset, setAskReset] = useState(false);
   const [voices, setVoices] = useState(germanVoices());
   useEffect(() => { const t = setTimeout(() => setVoices(germanVoices()), 500); return () => clearTimeout(t); }, []);
   const done = LESSONS.filter((l) => progress.lessons[l.id]?.done).length;
@@ -462,6 +468,15 @@ function Profile({ go }: { go: (r: Route) => void }) {
       </div>
 
       <h2>⚙️ Настройки</h2>
+      {aiProvider() === 'claude' || inArtifact() ? (
+        <div className="card form">
+          <h3>🤖 ИИ-преподаватель</h3>
+          <p>{aiProvider() === 'claude' ? '✅ Встроенный ИИ Claude подключён — ключ не нужен.' : '⏳ ИИ недоступен: разрешите доступ в меню разрешений артефакта.'}</p>
+          <p className="muted small">Синхронизация прогресса: {({ off: 'выключена (вы не вошли в аккаунт) — прогресс хранится только в этом браузере', connecting: 'подключение…', synced: '☁️ сохранено в аккаунте — прогресс одинаковый на телефоне и компьютере', saving: 'сохраняю…', error: '⚠️ нет связи, прогресс сохранён в браузере и отправится позже' } as const)[getSyncState()]}</p>
+          <button className="btn" onClick={testAi}>Проверить ИИ</button>
+          {test && <p className="small">{test}</p>}
+        </div>
+      ) : (
       <div className="card form">
         <h3>🤖 ИИ (Grok от xAI)</h3>
         <label>API-ключ
@@ -481,6 +496,7 @@ function Profile({ go }: { go: (r: Route) => void }) {
         <button className="btn" onClick={testAi}>Проверить подключение</button>
         {test && <p className="small">{test}</p>}
       </div>
+      )}
       <div className="card form">
         <h3>🔊 Голос и речь</h3>
         {!ttsSupported() && <p className="warn">Озвучка недоступна в этом браузере.</p>}
@@ -508,16 +524,23 @@ function Profile({ go }: { go: (r: Route) => void }) {
       </div>
       <div className="card form">
         <h3>💾 Данные</h3>
+        {msg && <p className="small">{msg}</p>}
         <div className="row-btns">
-          <button className="btn" onClick={() => {
+          {!inArtifact() && <button className="btn" onClick={() => {
             const blob = new Blob([exportProgress()], { type: 'application/json' });
             const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'deutsch-weg-progress.json'; a.click();
-          }}>Экспорт прогресса</button>
-          <label className="btn">Импорт<input type="file" accept="application/json" hidden onChange={async (e) => {
+          }}>Экспорт прогресса</button>}
+          {!inArtifact() && <label className="btn">Импорт<input type="file" accept="application/json" hidden onChange={async (e) => {
             const f = e.target.files?.[0]; if (!f) return;
-            try { importProgress(await f.text()); alert('Прогресс загружен'); } catch { alert('Неверный файл'); }
-          }} /></label>
-          <button className="btn danger" onClick={() => { if (confirm('Удалить весь прогресс?')) { resetProgress(); go({ n: 'home' }); } }}>Сбросить прогресс</button>
+            try { importProgress(await f.text()); setMsg('Прогресс загружен'); } catch { setMsg('Неверный файл'); }
+          }} /></label>}
+          {!askReset ? <button className="btn danger" onClick={() => setAskReset(true)}>Сбросить прогресс</button> : (
+            <>
+              <span className="small">Удалить весь прогресс без возможности восстановления?</span>
+              <button className="btn" onClick={() => setAskReset(false)}>Отмена</button>
+              <button className="btn danger" onClick={() => { resetProgress(); setAskReset(false); go({ n: 'home' }); }}>Да, удалить</button>
+            </>
+          )}
         </div>
       </div>
     </div>
