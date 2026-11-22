@@ -3,7 +3,8 @@ import type { Ex } from '../lib/exercises';
 import type { DialogLine } from '../data/types';
 import { checkAnswer, norm, pick, shuffle, similarity, wordDiff } from '../lib/text';
 import { listen, speak, sttSupported, type Listener } from '../lib/speech';
-import { AudioBtn, genderColor, Md, UmlautBar, WordView } from './ui';
+import { AudioBtn, genderColor, Md, MdBlock, UmlautBar, WordView } from './ui';
+import { aiConfigured, chat, TUTOR_BASE } from '../lib/grok';
 import { updateProgress } from '../lib/storage';
 
 export interface ExResult {
@@ -273,42 +274,61 @@ export function GapEx({ ex, onResult, locked }: P<'gap'>) {
 export function SpeakEx({ ex, onResult, locked }: P<'speak'>) {
   const [heard, setHeard] = useState('');
   const [rec, setRec] = useState<Listener | null>(null);
+  const [stage, setStage] = useState<'' | 'recording' | 'processing'>('');
   const [err, setErr] = useState('');
   const [tries, setTries] = useState(0);
+  const [score, setScore] = useState<number | null>(null);
+  const [myAudio, setMyAudio] = useState<string | null>(null);
+  const [tips, setTips] = useState<string | null>(null);
+  const [tipsBusy, setTipsBusy] = useState(false);
   const best = useRef<{ text: string; score: number }>({ text: '', score: 0 });
-  useEffect(() => { setHeard(''); setTries(0); setErr(''); best.current = { text: '', score: 0 }; }, [ex]);
+  useEffect(() => { setHeard(''); setTries(0); setErr(''); setScore(null); setMyAudio(null); setTips(null); best.current = { text: '', score: 0 }; }, [ex]);
   const supported = sttSupported();
 
   const start = () => {
     if (rec) { rec.stop(); return; }
-    setErr(''); setHeard('');
+    setErr(''); setHeard(''); setTips(null); setScore(null);
     const l = listen({
+      onStage: (st) => setStage(st),
+      onAudio: (b) => setMyAudio((old) => { if (old) URL.revokeObjectURL(old); return URL.createObjectURL(b); }),
       onResult: (t, alts, final) => {
         setHeard(t);
         if (final) {
-          const cands = [t, ...alts];
           let bestC = { text: t, score: 0 };
-          for (const c of cands) { const s = similarity(c, ex.de); if (s > bestC.score) bestC = { text: c, score: s }; }
+          for (const c of [t, ...alts]) { const sc = similarity(c, ex.de); if (sc > bestC.score) bestC = { text: c, score: sc }; }
           best.current = bestC;
           setHeard(bestC.text);
         }
       },
       onEnd: () => {
-        setRec(null);
-        setTries((n) => n + 1);
+        setRec(null); setStage('');
         const b = best.current;
-        if (b.text) {
-          const diff = wordDiff(ex.de, b.text);
-          const ratio = diff.filter((d) => d.ok).length / diff.length;
-          if (b.score >= 0.8 || ratio >= 0.8) {
-            updateProgress((p) => { p.spoken++; });
-            onResult({ ok: true, correct: ex.de, user: b.text });
-          }
+        if (!b.text) return;
+        setTries((n) => n + 1);
+        const diff = wordDiff(ex.de, b.text);
+        const ratio = diff.filter((d) => d.ok).length / diff.length;
+        const pct = Math.round(Math.max(b.score, ratio) * 100);
+        setScore(pct);
+        if (pct >= 80) {
+          updateProgress((p) => { p.spoken++; });
+          setTimeout(() => onResult({ ok: true, correct: ex.de, user: b.text }), 900);
         }
       },
-      onError: (m) => { setErr(m); setRec(null); },
+      onError: (m) => { setErr(m); setRec(null); setStage(''); },
     });
     setRec(l);
+  };
+  const analyze = async () => {
+    setTipsBusy(true);
+    try {
+      const out = await chat([
+        { role: 'system', content: TUTOR_BASE + ' Ты фонетист, помогаешь с немецким произношением. Отвечай коротко, списком, 3–5 пунктов.' },
+        { role: 'user', content: `Мне нужно было сказать: «${ex.de}». Система распознавания речи услышала: «${heard}». Совпадение ${score}%.
+Определи, какие слова/звуки я, скорее всего, произнёс неправильно (по расхождениям в распознанном тексте), и дай конкретные советы: как правильно артикулировать эти звуки (ü, ö, ä, ch, r, z, ei/ie, долгие/краткие гласные, ударение). Покажи проблемные слова с подсказкой произношения русскими буквами. Если всё совпало — похвали и дай один совет для более естественного звучания (интонация, связность).` },
+      ], { temperature: 0.3, maxTokens: 500 });
+      setTips(out);
+    } catch (e: any) { setTips('⚠️ ' + e.message); }
+    setTipsBusy(false);
   };
   const diff = heard ? wordDiff(ex.de, heard) : null;
   return (
@@ -316,26 +336,43 @@ export function SpeakEx({ ex, onResult, locked }: P<'speak'>) {
       <div className="kicker">Скажите вслух 🎙️</div>
       <div className="prompt column">
         <div className="say-text">
-          {diff ? diff.map((d, i) => <span key={i} className={d.ok ? 'w-ok' : 'w-bad'}>{d.w} </span>) : ex.de}
+          {diff && score !== null ? diff.map((d, i) => <span key={i} className={d.ok ? 'w-ok' : 'w-bad'}>{d.w} </span>) : ex.de}
         </div>
         <div className="muted">{ex.ru}</div>
         <AudioBtn text={ex.de} auto />
       </div>
       {supported ? (
         <>
-          <button className={'mic' + (rec ? ' rec' : '')} disabled={locked} onClick={start}>{rec ? '⏹' : '🎤'}</button>
-          <div className="center muted">{rec ? 'Говорите… (нажмите, чтобы закончить)' : 'Нажмите на микрофон и произнесите фразу'}</div>
-          {heard && !rec && <div className="heard">Распознано: «{heard}»</div>}
-          {tries >= 1 && !rec && !locked && <div className="center warn">Почти! Послушайте ещё раз и повторите. Красным — слова, которые не распознались.</div>}
+          <button className={'mic' + (stage === 'recording' ? ' rec' : '')} disabled={locked || stage === 'processing'} onClick={start}>
+            {stage === 'processing' ? '⏳' : rec ? '⏹' : '🎤'}
+          </button>
+          <div className="center muted">
+            {stage === 'processing' ? 'Grok распознаёт речь…' : rec ? 'Говорите… запись остановится сама после паузы' : 'Нажмите на микрофон и произнесите фразу'}
+          </div>
+          {score !== null && !rec && (
+            <div className={'pron-score ' + (score >= 80 ? 'good' : score >= 50 ? 'mid' : 'low')}>
+              <b>{score}%</b> {score >= 80 ? 'Отлично звучит!' : score >= 50 ? 'Почти! Обратите внимание на красные слова.' : 'Попробуйте ещё раз — сначала послушайте эталон.'}
+            </div>
+          )}
+          {heard && !rec && <div className="heard">Grok услышал: «{heard}»</div>}
+          {!rec && (myAudio || heard) && (
+            <div className="row-btns center">
+              {myAudio && <button className="btn small" onClick={() => new Audio(myAudio).play()}>▶ Моя запись</button>}
+              <button className="btn small" onClick={() => speak(ex.de)}>🔊 Как надо</button>
+              {heard && aiConfigured() && !tips && <button className="btn small" disabled={tipsBusy} onClick={analyze}>{tipsBusy ? 'Анализирую…' : '🤖 Разбор произношения'}</button>}
+            </div>
+          )}
+          {tips && <div className="card"><MdBlock text={tips} /></div>}
         </>
       ) : (
-        <div className="warn center">В этом браузере нет распознавания речи (лучше всего работает Chrome/Edge). Прочитайте фразу вслух сами.</div>
+        <div className="warn center">Распознавание речи недоступно. Добавьте ключ Grok в Профиле — тогда проверка произношения работает в любом браузере, включая iPhone. Пока можно прочитать фразу вслух и проверить себя.</div>
       )}
       {err && <div className="warn center">{err}</div>}
       <div className="row-btns">
-        {(!supported || tries >= 2) && !locked && (
-          <button className="btn" onClick={() => onResult({ ok: true, auto: false, correct: ex.de, user: heard || '(самопроверка)' })}>Я произнёс(ла) правильно ✓</button>
+        {(!supported || tries >= 2) && !locked && score !== null && score < 80 && (
+          <button className="btn" onClick={() => onResult({ ok: true, auto: false, correct: ex.de, user: heard || '(самопроверка)' })}>Засчитать и дальше</button>
         )}
+        {!supported && !locked && <button className="btn" onClick={() => onResult({ ok: true, auto: false, correct: ex.de, user: '(самопроверка)' })}>Я произнёс(ла) ✓</button>}
         {!locked && <button className="btn ghost" onClick={() => onResult({ ok: true, auto: true, skipped: true })}>Не могу говорить сейчас</button>}
       </div>
     </div>

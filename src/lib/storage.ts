@@ -11,18 +11,26 @@ export interface Settings {
   unlockAll: boolean;
   dailyGoal: number;
   showTranslit: boolean;
+  grokVoice: string;
+  useGrokVoice: boolean;
+  useGrokStt: boolean;
+  voiceModel: string;
 }
 
 const DEFAULT_SETTINGS: Settings = {
   apiKey: '',
   model: 'grok-4-fast-non-reasoning',
-  endpoint: '/api/chat',
+  endpoint: 'https://api.x.ai/v1/chat/completions',
   speechRate: 0.95,
   voiceURI: '',
   autoSpeak: true,
   unlockAll: false,
   dailyGoal: 50,
   showTranslit: true,
+  grokVoice: 'eve',
+  useGrokVoice: true,
+  useGrokStt: true,
+  voiceModel: 'grok-voice-latest',
 };
 
 export interface SrsItem { box: number; due: number; seen: number; wrong: number }

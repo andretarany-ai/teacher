@@ -1,5 +1,6 @@
 import { getSettings } from './storage';
 import { capNow, inArtifact } from './platform';
+import { grokSpeak, grokStt, hasKey, recordVoice, stopGrokAudio, type Recording } from './xai';
 
 let voices: SpeechSynthesisVoice[] = [];
 function loadVoices() {
@@ -17,7 +18,7 @@ export function germanVoices(): SpeechSynthesisVoice[] {
 }
 
 const browserTts = () => typeof speechSynthesis !== 'undefined';
-export const ttsSupported = () => browserTts() || !!capNow('tts');
+export const ttsSupported = () => browserTts() || !!capNow('tts') || hasKey();
 
 /** Голос Claude (capability tts), если в браузере нет немецкого голоса */
 function claudeTts(): any {
@@ -27,7 +28,21 @@ function claudeTts(): any {
   return germanVoices().length ? null : t;
 }
 
+let speakSeq = 0;
 export function speak(text: string, opts: { rate?: number; lang?: string; onEnd?: () => void } = {}) {
+  const s = getSettings();
+  const seq = ++speakSeq;
+  if (hasKey() && s.useGrokVoice && !(opts.lang && !opts.lang.startsWith('de'))) {
+    if (browserTts()) speechSynthesis.cancel();
+    grokSpeak(text, (opts.rate ?? 1) * s.speechRate, opts.onEnd).catch(() => {
+      if (seq === speakSeq) browserSpeak(text, opts);
+    });
+    return;
+  }
+  browserSpeak(text, opts);
+}
+
+function browserSpeak(text: string, opts: { rate?: number; lang?: string; onEnd?: () => void }) {
   const s = getSettings();
   const ct = claudeTts();
   if (ct) {
@@ -51,6 +66,8 @@ export function speak(text: string, opts: { rate?: number; lang?: string; onEnd?
 }
 
 export function stopSpeaking() {
+  speakSeq++;
+  stopGrokAudio();
   if (browserTts()) speechSynthesis.cancel();
   try { capNow('tts')?.stop(); } catch {}
 }
@@ -60,7 +77,10 @@ type SR = any;
 const SRClassRaw: any = typeof window !== 'undefined' ? (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition : null;
 // В артефакте микрофон браузера закрыт — там используется диктовка Claude
 const SRClass: any = inArtifact() ? null : SRClassRaw;
-export const sttSupported = () => !!SRClass || !!capNow('dictation');
+const grokSttOn = () => hasKey() && getSettings().useGrokStt && !!navigator.mediaDevices?.getUserMedia && typeof MediaRecorder !== 'undefined';
+export const sttSupported = () => grokSttOn() || !!SRClass || !!capNow('dictation');
+/** Какой движок распознавания используется */
+export const sttEngine = () => (grokSttOn() ? 'grok' : capNow('dictation') ? 'claude' : SRClass ? 'browser' : 'none');
 
 export interface Listener { stop: () => void }
 
@@ -68,8 +88,12 @@ export function listen(handlers: {
   onResult: (text: string, alternatives: string[], final: boolean) => void;
   onEnd?: () => void;
   onError?: (msg: string) => void;
+  onStage?: (stage: 'recording' | 'processing') => void;
+  onAudio?: (blob: Blob) => void;
   continuous?: boolean;
+  keyterms?: string[];
 }): Listener | null {
+  if (grokSttOn()) return listenGrok(handlers);
   const d = capNow('dictation');
   if (d) return listenDictation(d, handlers);
   if (!SRClass) { handlers.onError?.('Распознавание речи не поддерживается этим браузером. Используйте Chrome или Edge.'); return null; }
@@ -137,4 +161,32 @@ function listenDictation(d: any, h: Parameters<typeof listen>[0]): Listener {
     finish();
   });
   return { stop: () => { d.stop().catch(() => {}).finally(finish); } };
+}
+
+/** Запись голоса → распознавание Grok STT (работает в любом браузере с микрофоном, включая iPhone). */
+function listenGrok(h: Parameters<typeof listen>[0]): Listener {
+  let rec: Recording | null = null;
+  let wantStop = false;
+  let ended = false;
+  const end = () => { if (!ended) { ended = true; h.onEnd?.(); } };
+  stopSpeaking();
+  h.onStage?.('recording');
+  recordVoice({
+    onStop: async (blob) => {
+      if (!blob) { h.onError?.('Ничего не слышно — нажмите на микрофон и говорите громче.'); end(); return; }
+      h.onStage?.('processing');
+      h.onAudio?.(blob);
+      try {
+        const r = await grokStt(blob, h.keyterms || []);
+        if (r.text) h.onResult(r.text, [], true);
+        else h.onError?.('Grok не разобрал речь — попробуйте ещё раз.');
+      } catch (e: any) { h.onError?.(e?.message || 'Ошибка распознавания Grok'); }
+      end();
+    },
+  }).then((r) => { rec = r; if (wantStop) r.stop(); })
+    .catch((e) => {
+      h.onError?.(e?.name === 'NotAllowedError' ? 'Нет доступа к микрофону. Разрешите его в настройках браузера.' : 'Микрофон недоступен: ' + (e?.message || e));
+      end();
+    });
+  return { stop: () => { wantStop = true; rec?.stop(); } };
 }

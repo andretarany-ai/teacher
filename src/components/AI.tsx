@@ -27,7 +27,7 @@ export function NeedKey({ go }: { go: () => void }) {
   );
 }
 
-const LEVEL_RULES: Record<string, string> = {
+export const LEVEL_RULES: Record<string, string> = {
   A1: 'Используй только очень простые короткие предложения (5–8 слов), настоящее время, базовую лексику A1. Говори медленно и дружелюбно.',
   A2: 'Используй простые предложения уровня A2: настоящее время, Perfekt, модальные глаголы, weil/dass. Не более 2 предложений за раз.',
   B1: 'Говори на уровне B1: естественно, но понятно, придаточные предложения допустимы. 1–3 предложения.',
@@ -48,6 +48,7 @@ export function Roleplay({ level, title, role, situation, goal, words, onExit }:
   const [rec, setRec] = useState<Listener | null>(null);
   const [showRu, setShowRu] = useState<Record<number, boolean>>({});
   const [hint, setHint] = useState(false);
+  const [micStage, setMicStage] = useState<'' | 'recording' | 'processing'>('');
   const [summary, setSummary] = useState<any>(null);
   const [goalDone, setGoalDone] = useState(false);
   const bottom = useRef<HTMLDivElement>(null);
@@ -105,8 +106,9 @@ ${words?.length ? 'По возможности используй слова и�
     stopSpeaking();
     let last = '';
     const l = listen({
+      onStage: (st) => setMicStage(st),
       onResult: (t) => { last = t; setInput(t); },
-      onEnd: () => { setRec(null); if (last) { updateProgress((p) => { p.spoken++; }); send(last); } },
+      onEnd: () => { setRec(null); setMicStage(''); if (last) { updateProgress((p) => { p.spoken++; }); send(last); } },
       onError: (m) => { setErr(m); setRec(null); },
     });
     setRec(l);
@@ -116,52 +118,14 @@ ${words?.length ? 'По возможности используй слова и�
     const userTurns = turns.filter((t) => t.role === 'user');
     if (userTurns.length < 2) { onExit(); return; }
     setBusy(true);
-    try {
-      const r = await chatJson<any>([
-        { role: 'system', content: TUTOR_BASE },
-        { role: 'user', content: `Оцени мою часть диалога на немецком (уровень ${level}, ситуация: ${situation}, цель: ${goal}).
-Диалог:
-${turns.map((t) => (t.role === 'user' ? 'Я: ' : 'Собеседник: ') + t.de).join('\n')}
-Верни JSON: {"score":0-100,"goal_reached":true/false,"praise":"что получилось хорошо (по-русски)","mistakes":[{"wrong":"...","right":"...","why":"..."}],"tips":["совет 1","совет 2"],"useful_phrases":[{"de":"...","ru":"..."}]}` },
-      ], { temperature: 0.3, maxTokens: 1200 });
-      setSummary(r);
-      const xp = 10 + Math.min(20, userTurns.length * 2) + (r.goal_reached ? 10 : 0);
-      addXp(xp);
-      updateProgress((p) => { p.chats++; });
-      r._xp = xp;
-    } catch (e: any) { setErr(e.message); }
+    try { setSummary(await evaluateConversation(level, situation, goal, turns.map((t) => ({ me: t.role === 'user', text: t.de })), userTurns.length)); }
+    catch (e: any) { setErr(e.message); }
     setBusy(false);
   };
 
   if (!aiConfigured()) return <div className="page"><button className="btn ghost" onClick={onExit}>← Назад</button><NeedKey go={onExit} /></div>;
 
-  if (summary) {
-    return (
-      <div className="page">
-        <h2>🏁 Итоги разговора</h2>
-        <div className="card center">
-          <div className="score-big">{summary.score ?? '—'}<small>/100</small></div>
-          <div>{summary.goal_reached ? '🎯 Цель достигнута!' : 'Цель пока не достигнута — попробуйте ещё раз'}</div>
-          <div className="xp-gain">+{summary._xp} XP</div>
-        </div>
-        {summary.praise && <div className="card"><h3>👍 Хорошо получилось</h3><p>{summary.praise}</p></div>}
-        {summary.mistakes?.length > 0 && (
-          <div className="card"><h3>✏️ Ошибки</h3>
-            {summary.mistakes.map((m: any, i: number) => (
-              <div key={i} className="mistake"><s>{m.wrong}</s> → <b>{m.right}</b><div className="muted">{m.why}</div></div>
-            ))}
-          </div>
-        )}
-        {summary.tips?.length > 0 && <div className="card"><h3>💡 Советы</h3>{summary.tips.map((t: string, i: number) => <p key={i}>• {t}</p>)}</div>}
-        {summary.useful_phrases?.length > 0 && (
-          <div className="card"><h3>🗣 Полезные фразы</h3>
-            {summary.useful_phrases.map((p: any, i: number) => <div key={i} className="phrase-row" onClick={() => speak(p.de)}>🔊 <b>{p.de}</b> — {p.ru}</div>)}
-          </div>
-        )}
-        <button className="btn primary wide" onClick={onExit}>Готово</button>
-      </div>
-    );
-  }
+  if (summary) return <ConvSummary summary={summary} onExit={onExit} />;
 
   const lastAi = [...turns].reverse().find((t) => t.role === 'assistant');
   return (
@@ -215,7 +179,7 @@ ${turns.map((t) => (t.role === 'user' ? 'Я: ' : 'Собеседник: ') + t.d
           <button className="btn small" onClick={finish} disabled={busy}>🏁 Завершить и оценить</button>
         </div>
         <div className="input-row">
-          <textarea ref={inputRef} rows={1} value={input} onChange={(e) => setInput(e.target.value)} placeholder="Ответьте по-немецки или нажмите 🎤"
+          <textarea ref={inputRef} rows={1} value={input} onChange={(e) => setInput(e.target.value)} placeholder={micStage === 'recording' ? '🎙️ Говорите… (пауза — и отправлю)' : micStage === 'processing' ? '⏳ Grok распознаёт…' : 'Ответьте по-немецки или нажмите 🎤'}
             onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }} />
           {sttSupported() && <button className={'mic sm' + (rec ? ' rec' : '')} onClick={mic}>{rec ? '⏹' : '🎤'}</button>}
           <button className="btn primary" onClick={() => send()} disabled={busy || !input.trim()}>➤</button>
@@ -436,6 +400,50 @@ export function AskTutor({ onExit, context }: { onExit: () => void; context?: st
           <button className="btn primary" onClick={() => send()} disabled={busy || !input.trim()}>➤</button>
         </div>
       </div>
+    </div>
+  );
+}
+
+/* ================= Итоги разговора ================= */
+export async function evaluateConversation(level: string, situation: string, goal: string, lines: { me: boolean; text: string }[], userTurns: number) {
+  const r = await chatJson<any>([
+    { role: 'system', content: TUTOR_BASE },
+    { role: 'user', content: `Оцени мою часть диалога на немецком (уровень ${level}, ситуация: ${situation}, цель: ${goal}). Это мог быть голосовой разговор: мои реплики — результат распознавания речи, поэтому не придирайся к пунктуации и регистру, но отметь вероятные ошибки произношения, если слова распознаны странно.
+Диалог:
+${lines.map((t) => (t.me ? 'Я: ' : 'Собеседник: ') + t.text).join('\n')}
+Верни JSON: {"score":0-100,"goal_reached":true/false,"praise":"что получилось хорошо (по-русски)","mistakes":[{"wrong":"...","right":"...","why":"..."}],"tips":["совет 1","совет 2"],"useful_phrases":[{"de":"...","ru":"..."}]}` },
+  ], { temperature: 0.3, maxTokens: 1500 });
+  const xp = 10 + Math.min(25, userTurns * 2) + (r.goal_reached ? 10 : 0);
+  addXp(xp);
+  updateProgress((p) => { p.chats++; });
+  r._xp = xp;
+  return r;
+}
+
+export function ConvSummary({ summary, onExit }: { summary: any; onExit: () => void }) {
+  return (
+    <div className="page">
+      <h2>🏁 Итоги разговора</h2>
+      <div className="card center">
+        <div className="score-big">{summary.score ?? '—'}<small>/100</small></div>
+        <div>{summary.goal_reached ? '🎯 Цель достигнута!' : 'Цель пока не достигнута — попробуйте ещё раз'}</div>
+        <div className="xp-gain">+{summary._xp} XP</div>
+      </div>
+      {summary.praise && <div className="card"><h3>👍 Хорошо получилось</h3><p>{summary.praise}</p></div>}
+      {summary.mistakes?.length > 0 && (
+        <div className="card"><h3>✏️ Ошибки</h3>
+          {summary.mistakes.map((m: any, i: number) => (
+            <div key={i} className="mistake"><s>{m.wrong}</s> → <b>{m.right}</b> <button className="audio-btn" onClick={() => speak(m.right)}>🔊</button><div className="muted">{m.why}</div></div>
+          ))}
+        </div>
+      )}
+      {summary.tips?.length > 0 && <div className="card"><h3>💡 Советы</h3>{summary.tips.map((t: string, i: number) => <p key={i}>• {t}</p>)}</div>}
+      {summary.useful_phrases?.length > 0 && (
+        <div className="card"><h3>🗣 Полезные фразы</h3>
+          {summary.useful_phrases.map((p: any, i: number) => <div key={i} className="phrase-row" onClick={() => speak(p.de)}>🔊 <b>{p.de}</b> — {p.ru}</div>)}
+        </div>
+      )}
+      <button className="btn primary wide" onClick={onExit}>Готово</button>
     </div>
   );
 }

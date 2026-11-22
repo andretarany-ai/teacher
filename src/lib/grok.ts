@@ -39,7 +39,10 @@ async function chatClaude(sample: any, messages: ChatMsg[], opts: { json?: boole
 export async function chat(messages: ChatMsg[], opts: { json?: boolean; temperature?: number; maxTokens?: number } = {}): Promise<string> {
   const sample = capNow('sample');
   if (sample) return chatClaude(sample, messages, opts);
-  const s = getSettings();
+  const s0 = getSettings();
+  // На GitHub Pages и других статических хостингах прокси нет — идём напрямую
+  const s = !/^https?:/.test(s0.endpoint) && typeof location !== 'undefined' && !/^(localhost|127\.|192\.168\.)/.test(location.hostname)
+    ? { ...s0, endpoint: 'https://api.x.ai/v1/chat/completions' } : s0;
   const direct = /^https?:/.test(s.endpoint);
   if (direct && !s.apiKey) throw new AiError('Для прямого подключения нужен API-ключ Grok (Настройки → ИИ).');
   const headers: Record<string, string> = { 'content-type': 'application/json' };
@@ -93,7 +96,7 @@ export const aiConfigured = () => {
   if (capNow('sample')) return true;
   if (inArtifact()) return false;
   const s = getSettings();
-  return !!s.apiKey || !/^https?:/.test(s.endpoint);
+  return !!s.apiKey || (!/^https?:/.test(s.endpoint) && /^(localhost|127\.|192\.168\.)/.test(location.hostname));
 };
 
 export const TUTOR_BASE = `Ты — дружелюбный и терпеливый преподаватель немецкого языка для русскоговорящих учеников. Объясняешь кратко, понятно, с примерами, на русском языке. Немецкие примеры всегда пиши правильно, с умлаутами и заглавными буквами у существительных.`;

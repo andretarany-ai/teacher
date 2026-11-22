@@ -5,9 +5,11 @@ import { buildLesson, buildListening, buildPractice, buildReview, buildSpeaking,
 import { addXp, exportProgress, importProgress, resetProgress, saveSettings, srsAdd, srsDue, today, updateProgress, useStore } from './lib/storage';
 import { Player, type RunStats } from './components/Player';
 import { AskTutor, generateExercises, NeedKey, Roleplay, Story, Writing } from './components/AI';
+import { LiveTalk } from './components/Live';
+import { GROK_VOICES, hasKey } from './lib/xai';
 import { GAMES, gameBest } from './components/Games';
 import { AudioBtn, Spinner, WordView } from './components/ui';
-import { germanVoices, speak, sttSupported, ttsSupported } from './lib/speech';
+import { germanVoices, speak, sttEngine, sttSupported, ttsSupported } from './lib/speech';
 import { aiConfigured, aiProvider, chat } from './lib/grok';
 import { inArtifact, preloadCaps } from './lib/platform';
 import { getSyncState, startSync } from './lib/storage';
@@ -20,6 +22,7 @@ type Route =
   | { n: 'review' }
   | { n: 'talk' }
   | { n: 'roleplay'; level: string; title: string; role: string; situation: string; goal: string; words?: string[]; back: Route }
+  | { n: 'live'; level: string; title: string; role: string; situation: string; goal: string; words?: string[]; back: Route }
   | { n: 'writing'; id: string }
   | { n: 'story'; id: string }
   | { n: 'tutor'; back: Route; context?: string }
@@ -81,6 +84,7 @@ export default function App() {
     case 'review': body = <Review go={go} startPlay={startPlay} />; break;
     case 'talk': body = <Talk go={go} />; break;
     case 'roleplay': body = <Roleplay {...route} onExit={() => go(route.back)} />; break;
+    case 'live': body = <LiveTalk {...route} onExit={() => go(route.back)} goSettings={() => go({ n: 'profile' })} />; break;
     case 'writing': body = <Writing lesson={lessonById(route.id)!} onExit={() => go({ n: 'lesson', id: route.id })} />; break;
     case 'story': {
       const l = lessonById(route.id)!;
@@ -93,7 +97,7 @@ export default function App() {
     case 'game': { const G = GAMES.find((g) => g.id === route.id)!.C; body = <G onExit={() => go({ n: 'games' })} />; break; }
     case 'profile': body = <Profile go={go} />; break;
   }
-  const showTabs = !['play', 'roleplay', 'tutor'].includes(route.n);
+  const showTabs = !['play', 'roleplay', 'tutor', 'live'].includes(route.n);
   const dailyXp = progress.daily[today()] || 0;
   return (
     <div className="app">
@@ -149,6 +153,9 @@ function Home({ go }: { go: (r: Route) => void }) {
           <div className="muted small">{nextLesson.level} · урок {nextLesson.index + 1} из {LESSONS.length}</div>
           <div className="bar"><div className="bar-fill" style={{ width: (doneCount / LESSONS.length) * 100 + '%' }} /></div>
         </div>
+      )}
+      {!hasKey() && !inArtifact() && (
+        <div className="card key-cta" onClick={() => go({ n: 'profile' })}>🔑 <b>Вставьте ключ Grok</b>, чтобы включить голосовые разговоры, проверку произношения, озвучку голосом Grok и ИИ-задания →</div>
       )}
       {srsDue().length > 0 && (
         <div className="card review-cta" onClick={() => go({ n: 'review' })}>🔁 Пора повторить <b>{srsDue().length}</b> слов — это займёт пару минут →</div>
@@ -243,7 +250,8 @@ function LessonPage({ l, go, startPlay }: { l: Lesson; go: (r: Route) => void; s
 
       <h3 className="section-title">С ИИ-преподавателем 🤖</h3>
       <div className="grid-actions">
-        <button className="action ai" onClick={() => go({ n: 'roleplay', level: l.level, title: l.roleplay.role, role: l.roleplay.role, situation: l.roleplay.situation, goal: l.roleplay.goal, words: l.words.map((w) => w.full), back })}><span>💬</span>Ролевой разговор</button>
+        <button className="action ai" onClick={() => go({ n: 'live', level: l.level, title: l.roleplay.role, role: l.roleplay.role, situation: l.roleplay.situation, goal: l.roleplay.goal, words: l.words.map((w) => w.full), back })}><span>📞</span>Голосовой разговор</button>
+        <button className="action ai" onClick={() => go({ n: 'roleplay', level: l.level, title: l.roleplay.role, role: l.roleplay.role, situation: l.roleplay.situation, goal: l.roleplay.goal, words: l.words.map((w) => w.full), back })}><span>💬</span>Чат-разговор</button>
         <button className="action ai" onClick={aiPractice} disabled={gen}><span>✨</span>{gen ? 'Генерирую…' : 'Новые задания'}</button>
         <button className="action ai" onClick={() => go({ n: 'writing', id: l.id })}><span>✍️</span>Письмо с проверкой</button>
         <button className="action ai" onClick={() => go({ n: 'story', id: l.id })}><span>📖</span>Мини-история</button>
@@ -309,7 +317,8 @@ function Result({ r, go }: { r: Extract<Route, { n: 'result' }>; go: (r: Route) 
         <div className="card">
           <p>Слова урока добавлены в <b>интервальное повторение</b> 🔁. Закрепите тему:</p>
           <div className="row-btns center">
-            <button className="btn" onClick={() => go({ n: 'roleplay', level: l.level, title: l.roleplay.role, role: l.roleplay.role, situation: l.roleplay.situation, goal: l.roleplay.goal, words: l.words.map((w) => w.full), back: { n: 'lesson', id: l.id } })}>💬 Поговорить с ИИ</button>
+            <button className="btn" onClick={() => go({ n: 'live', level: l.level, title: l.roleplay.role, role: l.roleplay.role, situation: l.roleplay.situation, goal: l.roleplay.goal, words: l.words.map((w) => w.full), back: { n: 'lesson', id: l.id } })}>📞 Поговорить голосом</button>
+            <button className="btn" onClick={() => go({ n: 'roleplay', level: l.level, title: l.roleplay.role, role: l.roleplay.role, situation: l.roleplay.situation, goal: l.roleplay.goal, words: l.words.map((w) => w.full), back: { n: 'lesson', id: l.id } })}>💬 Чат с ИИ</button>
             <button className="btn" onClick={() => go({ n: 'writing', id: l.id })}>✍️ Написать текст</button>
           </div>
         </div>
@@ -384,7 +393,7 @@ function Talk({ go }: { go: (r: Route) => void }) {
   return (
     <div className="page">
       <h1>💬 Разговорная практика</h1>
-      <p className="muted">Говорите голосом 🎤 или пишите. ИИ отвечает по-немецки на вашем уровне, исправляет ошибки и подсказывает, что сказать.</p>
+      <p className="muted">📞 <b>Голосом</b> — живой разговор с Grok, как по телефону: вы говорите, он отвечает голосом и мягко поправляет. 💬 <b>Чат</b> — переписка (можно надиктовать) с исправлением каждой ошибки и подсказками.</p>
       {!aiConfigured() && <NeedKey go={() => go({ n: 'profile' })} />}
       <div className="card">
         <h3>Ваш уровень для свободных сценариев</h3>
@@ -395,18 +404,29 @@ function Talk({ go }: { go: (r: Route) => void }) {
       <h3 className="section-title">Свободные сценарии</h3>
       <div className="scenarios">
         {FREE_SCENARIOS.map((s) => (
-          <button key={s.title} className="scenario" onClick={() => go({ n: 'roleplay', level, title: s.title, role: s.role, situation: s.situation, goal: s.goal, back })}>
+          <div key={s.title} className="scenario">
             <b>{s.title}</b><span className="muted small">{s.situation}</span><span className="small">🎯 {s.goal}</span>
-          </button>
+            <div className="scn-btns">
+              <button className="btn small primary" onClick={() => go({ n: 'live', level, title: s.title, role: s.role, situation: s.situation, goal: s.goal, back })}>📞 Голосом</button>
+              <button className="btn small" onClick={() => go({ n: 'roleplay', level, title: s.title, role: s.role, situation: s.situation, goal: s.goal, back })}>💬 Чат</button>
+            </div>
+          </div>
         ))}
       </div>
       <h3 className="section-title">Сценарии из уроков</h3>
       <div className="scenarios">
-        {unlocked.map((l) => (
-          <button key={l.id} className="scenario" onClick={() => go({ n: 'roleplay', level: l.level, title: l.emoji + ' ' + l.title, role: l.roleplay.role, situation: l.roleplay.situation, goal: l.roleplay.goal, words: l.words.map((w) => w.full), back })}>
-            <b>{l.emoji} {l.title} <span className="lvl">{l.level}</span></b><span className="muted small">{l.roleplay.situation}</span><span className="small">🎯 {l.roleplay.goal}</span>
-          </button>
-        ))}
+        {unlocked.map((l) => {
+          const r = { level: l.level, title: l.emoji + ' ' + l.title, role: l.roleplay.role, situation: l.roleplay.situation, goal: l.roleplay.goal, words: l.words.map((w) => w.full), back };
+          return (
+            <div key={l.id} className="scenario">
+              <b>{l.emoji} {l.title} <span className="lvl">{l.level}</span></b><span className="muted small">{l.roleplay.situation}</span><span className="small">🎯 {l.roleplay.goal}</span>
+              <div className="scn-btns">
+                <button className="btn small primary" onClick={() => go({ n: 'live', ...r })}>📞 Голосом</button>
+                <button className="btn small" onClick={() => go({ n: 'roleplay', ...r })}>💬 Чат</button>
+              </div>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -477,30 +497,44 @@ function Profile({ go }: { go: (r: Route) => void }) {
           {test && <p className="small">{test}</p>}
         </div>
       ) : (
-      <div className="card form">
-        <h3>🤖 ИИ (Grok от xAI)</h3>
-        <label>API-ключ
-          <input type="password" value={settings.apiKey} placeholder="xai-… (можно оставить пустым, если ключ задан на сервере)" onChange={(e) => saveSettings({ apiKey: e.target.value.trim() })} />
-        </label>
-        <label>Подключение
-          <select value={/^https?:/.test(settings.endpoint) ? 'direct' : 'proxy'} onChange={(e) => saveSettings({ endpoint: e.target.value === 'direct' ? 'https://api.x.ai/v1/chat/completions' : '/api/chat' })}>
-            <option value="proxy">Через сервер приложения /api/chat (рекомендуется)</option>
-            <option value="direct">Напрямую к api.x.ai из браузера</option>
-          </select>
-        </label>
-        <label>Модель
-          <input value={settings.model} onChange={(e) => saveSettings({ model: e.target.value.trim() })} list="models" />
-          <datalist id="models"><option value="grok-4-fast-non-reasoning" /><option value="grok-4-fast-reasoning" /><option value="grok-4" /><option value="grok-3-mini" /><option value="grok-3" /></datalist>
-        </label>
-        <p className="muted small">Ключ хранится только в этом браузере. Получить ключ: console.x.ai</p>
-        <button className="btn" onClick={testAi}>Проверить подключение</button>
-        {test && <p className="small">{test}</p>}
-      </div>
+        <div className="card form" id="grok">
+          <h3>🤖 Grok (xAI)</h3>
+          <label>API-ключ Grok
+            <input id="grok-key" type="password" value={settings.apiKey} placeholder="xai-…" autoComplete="off" onChange={(e) => saveSettings({ apiKey: e.target.value.trim() })} />
+          </label>
+          <p className="muted small">Ключ хранится только в этом браузере и отправляется только на api.x.ai. Получить: console.x.ai → API Keys. На каждом устройстве (телефон, компьютер) ключ вводится один раз.</p>
+          <button className="btn primary" onClick={testAi} disabled={!settings.apiKey}>Проверить ключ</button>
+          {test && <p className="small">{test}</p>}
+          <label>Голос Grok для озвучки и разговоров
+            <select id="grok-voice" value={settings.grokVoice} onChange={(e) => { saveSettings({ grokVoice: e.target.value }); setTimeout(() => speak('Hallo! Schön, dass du Deutsch lernst.'), 50); }}>
+              {GROK_VOICES.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
+            </select>
+          </label>
+          <label className="toggle"><input type="checkbox" checked={settings.useGrokVoice} onChange={(e) => saveSettings({ useGrokVoice: e.target.checked })} /> Озвучивать немецкий голосом Grok (естественнее, чем голос браузера)</label>
+          <label className="toggle"><input type="checkbox" checked={settings.useGrokStt} onChange={(e) => saveSettings({ useGrokStt: e.target.checked })} /> Распознавать мою речь через Grok (точнее, работает и на iPhone)</label>
+          <details>
+            <summary className="small">Дополнительно</summary>
+            <label>Модель для текста и анализа
+              <input id="grok-model" value={settings.model} onChange={(e) => saveSettings({ model: e.target.value.trim() })} list="models" />
+              <datalist id="models"><option value="grok-4-fast-non-reasoning" /><option value="grok-4-fast-reasoning" /><option value="grok-4" /><option value="grok-3-mini" /></datalist>
+            </label>
+            <label>Модель голосового разговора
+              <input id="grok-voice-model" value={settings.voiceModel} onChange={(e) => saveSettings({ voiceModel: e.target.value.trim() })} />
+            </label>
+            <label>Подключение для текста
+              <select id="grok-endpoint" value={/^https?:/.test(settings.endpoint) ? 'direct' : 'proxy'} onChange={(e) => saveSettings({ endpoint: e.target.value === 'direct' ? 'https://api.x.ai/v1/chat/completions' : '/api/chat' })}>
+                <option value="direct">Напрямую к api.x.ai (для GitHub Pages)</option>
+                <option value="proxy">Через свой сервер /api/chat</option>
+              </select>
+            </label>
+          </details>
+        </div>
       )}
       <div className="card form">
         <h3>🔊 Голос и речь</h3>
+        <p className="muted small">Сейчас озвучка: {hasKey() && settings.useGrokVoice ? 'голос Grok' : 'голос браузера'} · распознавание речи: {({ grok: 'Grok', claude: 'диктовка Claude', browser: 'браузер', none: 'недоступно — добавьте ключ Grok' } as const)[sttEngine()]}</p>
         {!ttsSupported() && <p className="warn">Озвучка недоступна в этом браузере.</p>}
-        <label>Немецкий голос
+        <label>Голос браузера (если Grok выключен)
           <select value={settings.voiceURI} onChange={(e) => { saveSettings({ voiceURI: e.target.value }); setTimeout(() => speak('Hallo! Wie geht es dir?'), 50); }}>
             <option value="">Автоматически</option>
             {voices.map((v) => <option key={v.voiceURI} value={v.voiceURI}>{v.name} ({v.lang})</option>)}
@@ -511,7 +545,6 @@ function Profile({ go }: { go: (r: Route) => void }) {
         </label>
         <AudioBtn text="Guten Tag! Ich bin Ihre Deutschlehrerin." label=" Тест" />
         <label className="toggle"><input type="checkbox" checked={settings.autoSpeak} onChange={(e) => saveSettings({ autoSpeak: e.target.checked })} /> Озвучивать ответы ИИ автоматически</label>
-        <p className="muted small">Распознавание речи: {sttSupported() ? '✅ доступно' : '❌ недоступно (используйте Chrome или Edge)'}</p>
       </div>
       <div className="card form">
         <h3>📚 Обучение</h3>
