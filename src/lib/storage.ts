@@ -223,3 +223,23 @@ export function addMistake(de: string, ru: string) {
     p.mistakes = [{ de, ru, at: Date.now() }, ...p.mistakes.filter((m) => m.de !== de)].slice(0, 100);
   });
 }
+
+/* ---------- Незаконченные уроки: место, где остановились ---------- */
+export interface SavedRun { queue: any[]; i: number; stats: { total: number; correct: number; mistakes: number; spoken: number }; retried: string[]; savedAt: number }
+const KR = 'dw.resume.v1';
+function readRuns(): Record<string, SavedRun> {
+  try { return JSON.parse(localStorage.getItem(KR) || '{}'); } catch { return {}; }
+}
+export function getResume(id: string): SavedRun | null {
+  const r = readRuns()[id];
+  return r && Array.isArray(r.queue) && r.i > 0 && r.i < r.queue.length ? r : null;
+}
+export function saveResume(id: string, run: SavedRun) {
+  const all = readRuns();
+  all[id] = run;
+  try { localStorage.setItem(KR, JSON.stringify(all)); } catch {}
+}
+export function clearResume(id: string) {
+  const all = readRuns();
+  if (all[id]) { delete all[id]; try { localStorage.setItem(KR, JSON.stringify(all)); } catch {} }
+}

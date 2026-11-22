@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Ex } from '../lib/exercises';
-import { ArticleEx, Build, DialogEx, Flash, GapEx, GrammarCard, Match, MultipleChoice, SpeakEx, TypeEx, type ExResult } from './Exercises';
-import { addMistake, srsAnswer } from '../lib/storage';
+import { ArticleEx, Build, DialogEx, Flash, GapEx, GrammarCard, Match, MultipleChoice, PhraseCard, RuleCard, ScriptCard, SpeakEx, TypeEx, type ExResult } from './Exercises';
+import { addMistake, clearResume, saveResume, srsAnswer, type SavedRun } from '../lib/storage';
 import { aiConfigured, chat, TUTOR_BASE } from '../lib/grok';
 import { MdBlock, Spinner } from './ui';
 import { speak } from '../lib/speech';
@@ -10,25 +10,32 @@ export interface RunStats { total: number; correct: number; mistakes: number; sp
 
 const GOOD = ['Отлично!', 'Super!', 'Prima!', 'Sehr gut!', 'Wunderbar!', 'Klasse!', 'Genau!', 'Richtig!'];
 
-export function Player({ title, items, onExit, onFinish, level }: {
+const exKey = (e: Ex) => JSON.stringify(e).slice(0, 400);
+
+export function Player({ title, items, onExit, onFinish, level, saveKey, initial }: {
   title: string; items: Ex[]; level?: string;
   onExit: () => void; onFinish: (s: RunStats) => void;
+  /** если задан — место в уроке сохраняется, и при выходе можно продолжить */
+  saveKey?: string; initial?: SavedRun | null;
 }) {
-  const [queue, setQueue] = useState<Ex[]>(items);
-  const [i, setI] = useState(0);
+  const [queue, setQueue] = useState<Ex[]>(initial?.queue || items);
+  const [i, setI] = useState(initial?.i || 0);
   const [fb, setFb] = useState<ExResult | null>(null);
   const [combo, setCombo] = useState(0);
   const [explain, setExplain] = useState<string | null>(null);
   const [loadingExp, setLoadingExp] = useState(false);
   const [askExit, setAskExit] = useState(false);
-  const stats = useRef<RunStats>({ total: 0, correct: 0, mistakes: 0, spoken: 0 });
-  const retried = useRef(new Set<Ex>());
+  const stats = useRef<RunStats>(initial?.stats || { total: 0, correct: 0, mistakes: 0, spoken: 0 });
+  const retried = useRef(new Set<string>(initial?.retried || []));
+  useEffect(() => {
+    if (saveKey && i > 0) saveResume(saveKey, { queue, i, stats: stats.current, retried: [...retried.current], savedAt: Date.now() });
+  }, [i, queue]); // eslint-disable-line
   const ex = queue[i];
-  const scored = (e: Ex) => !['grammar', 'flash', 'dialog'].includes(e.t);
+  const scored = (e: Ex) => !['grammar', 'flash', 'dialog', 'phrase', 'rule', 'script'].includes(e.t);
 
   const next = () => {
     setFb(null); setExplain(null);
-    if (i + 1 >= queue.length) onFinish(stats.current);
+    if (i + 1 >= queue.length) { if (saveKey) clearResume(saveKey); onFinish(stats.current); }
     else setI(i + 1);
   };
 
@@ -46,8 +53,8 @@ export function Player({ title, items, onExit, onFinish, level }: {
         if (cyr.test(r.correct) && !cyr.test(r.question)) addMistake(r.question, r.correct);
         else if (!cyr.test(r.correct)) addMistake(r.correct, r.question);
       }
-      if (!retried.current.has(ex) && ex.t !== 'match' && ex.t !== 'dialog') {
-        retried.current.add(ex);
+      if (!retried.current.has(exKey(ex)) && ex.t !== 'match' && ex.t !== 'dialog') {
+        retried.current.add(exKey(ex));
         setQueue((q) => [...q, ex]);
       }
       setCombo(0);
@@ -90,7 +97,7 @@ export function Player({ title, items, onExit, onFinish, level }: {
       {askExit && (
         <div className="exit-confirm card">
           <b>Выйти из урока?</b>
-          <span className="muted small">Результат этого прохождения не сохранится.</span>
+          <span className="muted small">{saveKey ? `Место сохранится: вы продолжите с задания ${i + 1} из ${queue.length}.` : 'Результат этой тренировки не сохранится.'}</span>
           <div className="row-btns">
             <button className="btn" onClick={() => setAskExit(false)}>Остаться</button>
             <button className="btn danger" onClick={onExit}>Выйти</button>
@@ -108,6 +115,9 @@ export function Player({ title, items, onExit, onFinish, level }: {
         {ex.t === 'gap' && <GapEx ex={ex} {...P} />}
         {ex.t === 'speak' && <SpeakEx ex={ex} {...P} />}
         {ex.t === 'dialog' && <DialogEx ex={ex} {...P} />}
+        {ex.t === 'phrase' && <PhraseCard ex={ex} {...P} />}
+        {ex.t === 'rule' && <RuleCard ex={ex} {...P} />}
+        {ex.t === 'script' && <ScriptCard ex={ex} {...P} />}
       </div>
       {fb && (
         <div className={'feedback ' + (fb.ok ? 'ok' : 'bad')}>

@@ -12,12 +12,12 @@ import { AudioBtn, Spinner, WordView } from './components/ui';
 import { germanVoices, speak, sttEngine, sttSupported, ttsSupported } from './lib/speech';
 import { aiConfigured, aiProvider, chat } from './lib/grok';
 import { inArtifact, preloadCaps } from './lib/platform';
-import { getSyncState, startSync } from './lib/storage';
+import { clearResume, getResume, getSyncState, startSync, type SavedRun } from './lib/storage';
 
 type Route =
   | { n: 'home' }
   | { n: 'lesson'; id: string }
-  | { n: 'play'; title: string; items: Ex[]; lessonId?: string; full?: boolean; back: Route; level?: string }
+  | { n: 'play'; title: string; items: Ex[]; lessonId?: string; full?: boolean; back: Route; level?: string; initial?: SavedRun | null }
   | { n: 'result'; stats: RunStats; xp: number; lessonId?: string; back: Route; full?: boolean }
   | { n: 'review' }
   | { n: 'talk' }
@@ -49,9 +49,9 @@ export default function App() {
   useEffect(() => { preloadCaps(() => setCapsReady((x) => x + 1)); startSync(); }, []);
   useEffect(() => { document.body.classList.toggle('in-player', route.n === 'play'); }, [route.n]);
 
-  const startPlay = (title: string, items: Ex[], back: Route, lessonId?: string, full?: boolean, level?: string) => {
-    if (!items.length) return;
-    go({ n: 'play', title, items, back, lessonId, full, level });
+  const startPlay = (title: string, items: Ex[], back: Route, lessonId?: string, full?: boolean, level?: string, initial?: SavedRun | null) => {
+    if (!items.length && !initial) return;
+    go({ n: 'play', title, items, back, lessonId, full, level, initial });
   };
 
   const finish = (r: Extract<Route, { n: 'play' }>, stats: RunStats) => {
@@ -79,7 +79,7 @@ export default function App() {
       body = <LessonPage l={l} go={go} startPlay={startPlay} />;
       break;
     }
-    case 'play': body = <Player title={route.title} items={route.items} level={route.level} onExit={() => go(route.back)} onFinish={(s) => finish(route, s)} />; break;
+    case 'play': body = <Player key={route.title + (route.initial?.savedAt || '')} title={route.title} items={route.items} level={route.level} saveKey={route.full && route.lessonId ? route.lessonId : undefined} initial={route.initial} onExit={() => go(route.back)} onFinish={(s) => finish(route, s)} />; break;
     case 'result': body = <Result r={route} go={go} />; break;
     case 'review': body = <Review go={go} startPlay={startPlay} />; break;
     case 'talk': body = <Talk go={go} />; break;
@@ -150,7 +150,7 @@ function Home({ go }: { go: (r: Route) => void }) {
         <div className="card continue" onClick={() => go({ n: 'lesson', id: nextLesson.id })}>
           <div className="muted small">Продолжить</div>
           <div className="continue-title">{nextLesson.emoji} {nextLesson.title}</div>
-          <div className="muted small">{nextLesson.level} · урок {nextLesson.index + 1} из {LESSONS.length}</div>
+          <div className="muted small">{nextLesson.level} · урок {nextLesson.index + 1} из {LESSONS.length}{getResume(nextLesson.id) ? ` · остановились на задании ${getResume(nextLesson.id)!.i + 1}` : ''}</div>
           <div className="bar"><div className="bar-fill" style={{ width: (doneCount / LESSONS.length) * 100 + '%' }} /></div>
         </div>
       )}
@@ -202,9 +202,10 @@ function Home({ go }: { go: (r: Route) => void }) {
 }
 
 /* ================= Страница урока ================= */
-function LessonPage({ l, go, startPlay }: { l: Lesson; go: (r: Route) => void; startPlay: (t: string, i: Ex[], b: Route, id?: string, full?: boolean, level?: string) => void }) {
+function LessonPage({ l, go, startPlay }: { l: Lesson; go: (r: Route) => void; startPlay: (t: string, i: Ex[], b: Route, id?: string, full?: boolean, level?: string, initial?: SavedRun | null) => void }) {
   const { progress } = useStore();
   const pr = progress.lessons[l.id];
+  const saved = getResume(l.id);
   const back: Route = { n: 'lesson', id: l.id };
   const [gen, setGen] = useState(false);
   const [err, setErr] = useState('');
@@ -235,18 +236,27 @@ function LessonPage({ l, go, startPlay }: { l: Lesson; go: (r: Route) => void; s
           {pr?.done && <div className="stars">{'★'.repeat(pr.stars)}{'☆'.repeat(3 - pr.stars)} <span className="muted small">лучший результат {pr.best}%</span></div>}
         </div>
       </div>
-      <button className="btn primary wide big" onClick={() => startPlay(l.title, buildLesson(l), back, l.id, true, l.level)}>
-        {pr?.done ? '🔄 Пройти урок заново' : '▶ Начать урок'}
-      </button>
+      {saved ? (
+        <div className="resume-box">
+          <button className="btn primary big" onClick={() => startPlay(l.title, [], back, l.id, true, l.level, saved)}>
+            ▶ Продолжить урок (задание {saved.i + 1} из {saved.queue.length})
+          </button>
+          <button className="btn" onClick={() => { clearResume(l.id); startPlay(l.title, buildLesson(l), back, l.id, true, l.level); }}>Начать заново</button>
+        </div>
+      ) : (
+        <button className="btn primary wide big" onClick={() => startPlay(l.title, buildLesson(l), back, l.id, true, l.level)}>
+          {pr?.done ? '🔄 Пройти урок заново' : '▶ Начать урок'}
+        </button>
+      )}
 
       <h3 className="section-title">Тренировки</h3>
       <div className="grid-actions">
         <button className="action" disabled={!pr?.done} onClick={() => startPlay('Тренировка: ' + l.title, buildPractice(l), back, l.id, false, l.level)}><span>🏋️</span>Быстрая тренировка</button>
         <button className="action" onClick={() => startPlay('Произношение: ' + l.title, buildSpeaking(l), back, l.id, false, l.level)}><span>🎙️</span>Произношение</button>
-        <button className="action" onClick={() => startPlay('Аудирование: ' + l.title, buildListening(l), back, l.id, false, l.level)}><span>🎧</span>Аудирование</button>
+        <button className="action" disabled={!pr?.done} onClick={() => startPlay('Аудирование: ' + l.title, buildListening(l), back, l.id, false, l.level)}><span>🎧</span>Аудирование</button>
         <button className="action" onClick={() => startPlay('Диалог', [{ t: 'dialog', title: l.dialogTitle, lines: l.dialog, distractors: l.phrases.map((p) => p.de) }], back, l.id, false, l.level)}><span>🎭</span>Диалог</button>
       </div>
-      {!pr?.done && <p className="muted small">Быстрая тренировка откроется после прохождения урока.</p>}
+      {!pr?.done && <p className="muted small">Быстрая тренировка и аудирование откроются после прохождения урока.</p>}
 
       <h3 className="section-title">С ИИ-преподавателем 🤖</h3>
       <div className="grid-actions">

@@ -10,7 +10,10 @@ export type Ex =
   | { t: 'match'; pairs: [string, string][] }
   | { t: 'build'; ru: string; answer: string; tokens: string[] }
   | { t: 'type'; title: string; prompt: string; audio?: string; answer: string[]; ru: string; hint?: string; key?: string }
-  | { t: 'gap'; gap: Gap }
+  | { t: 'gap'; gap: Gap; rule?: Lesson['grammar'] }
+  | { t: 'phrase'; de: string; ru: string; gloss: { de: string; ru: string }[]; n: number; total: number }
+  | { t: 'rule'; lesson: Lesson }
+  | { t: 'script'; title: string; lines: DialogLine[] }
   | { t: 'speak'; de: string; ru: string }
   | { t: 'dialog'; title: string; lines: DialogLine[]; distractors: string[] };
 
@@ -60,7 +63,29 @@ function listenType(p: { de: string; ru: string }): Ex {
   return { t: 'type', title: 'Напишите, что услышали', prompt: '', audio: p.de, answer: [p.de], ru: p.ru };
 }
 
-/** Полный урок: грамматика → слова блоками → фразы → пропуски → произношение → диалог */
+/** Слова урока, которые встречаются во фразе — мини-словарик для карточки фразы */
+function glossFor(de: string, lesson: Lesson): { de: string; ru: string }[] {
+  const toks = tokenize(de).map((t) => cleanTok(t).toLowerCase()).filter(Boolean);
+  const pool = [...lesson.words, ...LESSONS.filter((l) => l.index < lesson.index).flatMap((l) => l.words)];
+  const out: { de: string; ru: string }[] = [];
+  const seen = new Set<string>();
+  for (const t of toks) {
+    const w = pool.find((x) => {
+      const base = x.de.toLowerCase();
+      if (base.includes(' ')) return false;
+      return base === t || (base.length > 3 && (t.startsWith(base) || base.startsWith(t)) && Math.abs(base.length - t.length) <= 2);
+    });
+    if (w && !seen.has(w.full)) { seen.add(w.full); out.push({ de: w.full, ru: w.ru }); }
+  }
+  return out.slice(0, 6);
+}
+
+/**
+ * Полный урок. Принцип: сначала показываем, потом спрашиваем.
+ * Грамматика → слова блоками (карточки → пары → проверка) → фразы блоками
+ * (карточки фраз со словариком → задания только по показанным фразам) →
+ * памятка по правилу → пропуски с подсказкой → повторение → чтение диалога → диалог.
+ */
 export function buildLesson(lesson: Lesson): Ex[] {
   const out: Ex[] = [{ t: 'grammar', lesson }];
   const words = lesson.words;
@@ -75,21 +100,34 @@ export function buildLesson(lesson: Lesson): Ex[] {
   nouns.slice(0, 3).forEach((w) => out.push({ t: 'article', word: w }));
   shuffle(words).slice(0, 3).forEach((w) => out.push(mcDe(w, lesson)));
 
-  const phrases = shuffle(lesson.phrases);
-  const gaps = shuffle(lesson.gaps);
-  const mixed: Ex[] = [];
-  phrases.forEach((p, i) => {
-    const k = i % 4;
-    if (k === 0) mixed.push(build(p, lesson));
-    else if (k === 1) mixed.push(listenPhraseMc(p, lesson));
-    else if (k === 2) mixed.push({ t: 'speak', de: p.de, ru: p.ru });
-    else mixed.push(build(p, lesson));
-  });
-  gaps.forEach((g) => mixed.push({ t: 'gap', gap: g }));
-  out.push(...shuffle(mixed));
-  if (phrases[0]) out.push(listenType(phrases[0]));
+  // Фразы: блоками по 3 — сначала знакомство, потом задания именно по ним
+  const phrases = lesson.phrases;
+  let k = 0;
+  for (let i = 0; i < phrases.length; i += 3) {
+    const chunk = phrases.slice(i, i + 3);
+    chunk.forEach((p, j) => out.push({ t: 'phrase', de: p.de, ru: p.ru, gloss: glossFor(p.de, lesson), n: i + j + 1, total: phrases.length }));
+    const tasks: Ex[] = chunk.map((p) => {
+      const m = k++ % 3;
+      return m === 0 ? listenPhraseMc(p, lesson) : m === 1 ? build(p, lesson) : { t: 'speak', de: p.de, ru: p.ru };
+    });
+    out.push(...shuffle(tasks));
+  }
+
+  // Правило на практике: памятка, затем пропуски с подсказкой
+  if (lesson.gaps.length) {
+    out.push({ t: 'rule', lesson });
+    shuffle(lesson.gaps).forEach((g) => out.push({ t: 'gap', gap: g, rule: lesson.grammar }));
+  }
+
+  // Закрепление всего урока
+  const review = shuffle(phrases);
+  if (review[0]) out.push(build(review[0], lesson));
+  if (review[1]) out.push(listenType(review[1]));
   shuffle(words).slice(0, 2).forEach((w) => out.push(typeWord(w)));
+
+  // Диалог: сначала читаем с переводом, потом играем роль
   if (lesson.dialog.length) {
+    out.push({ t: 'script', title: lesson.dialogTitle, lines: lesson.dialog });
     const others = ALL_PHRASES.filter((p) => p.lesson === lesson.id).map((p) => p.de);
     out.push({ t: 'dialog', title: lesson.dialogTitle, lines: lesson.dialog, distractors: others });
   }
@@ -103,7 +141,7 @@ export function buildPractice(lesson: Lesson): Ex[] {
   out.push({ t: 'match', pairs: w.slice(0, 5).map((x) => [x.full, x.ru]) });
   w.slice(0, 4).forEach((x, i) => out.push(i % 2 ? mcDe(x, lesson) : listenWord(x, lesson)));
   shuffle(lesson.phrases).slice(0, 4).forEach((p, i) => out.push(i % 2 ? build(p, lesson) : { t: 'speak', de: p.de, ru: p.ru }));
-  shuffle(lesson.gaps).slice(0, 3).forEach((g) => out.push({ t: 'gap', gap: g }));
+  shuffle(lesson.gaps).slice(0, 3).forEach((g) => out.push({ t: 'gap', gap: g, rule: lesson.grammar }));
   w.filter((x) => x.g).slice(0, 2).forEach((x) => out.push({ t: 'article', word: x }));
   w.slice(4, 6).forEach((x) => out.push(typeWord(x)));
   return shuffle(out);

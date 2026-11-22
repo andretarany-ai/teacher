@@ -253,6 +253,13 @@ export function GapEx({ ex, onResult, locked }: P<'gap'>) {
         {g.before}<span className={'gap-slot' + (v ? ' filled' : '')}>{v || '____'}</span>{g.after}
       </div>
       <div className="muted center">{g.ru}</div>
+      {ex.rule && (
+        <details className="rule-hint">
+          <summary>💡 Подсказка: правило «{ex.rule.title}»</summary>
+          {ex.rule.points.map((pt, i) => <p key={i}><Md text={pt} /></p>)}
+          {ex.rule.table && <div className="table-wrap"><table><tbody>{ex.rule.table.map((row, i) => <tr key={i}>{row.map((c, j) => (i === 0 ? <th key={j}>{c}</th> : <td key={j}>{c}</td>))}</tr>)}</tbody></table></div>}
+        </details>
+      )}
       {opts ? (
         <div className="bank">
           {opts.map((o) => (
@@ -464,6 +471,82 @@ export function DialogEx({ ex, onResult }: P<'dialog'>) {
         <div ref={bottom} />
       </div>
       {finished && <button className="btn primary wide" onClick={() => onResult({ ok: errors.current < 3, auto: true })}>Диалог завершён 🎉 Дальше →</button>}
+    </div>
+  );
+}
+
+/* ---------- Новая фраза: сначала догадаться, потом проверить ---------- */
+export function PhraseCard({ ex, onResult }: P<'phrase'>) {
+  const [shown, setShown] = useState(false);
+  const [open, setOpen] = useState<Record<number, boolean>>({});
+  useEffect(() => { setShown(false); setOpen({}); }, [ex]);
+  return (
+    <div className="ex flash">
+      <div className="kicker">Новая фраза {ex.n}/{ex.total}</div>
+      <div className="flash-card">
+        <div className="phrase-de">{ex.de}</div>
+        <AudioBtn text={ex.de} auto big />
+        {ex.gloss.length > 0 && (
+          <div className="gloss-row">
+            <div className="muted small">{shown ? 'Слова во фразе:' : 'Знакомые слова — вспомните перевод, потом нажмите:'}</div>
+            <div className="bank">
+              {ex.gloss.map((g, i) => (
+                <button key={i} className={'chip gloss-chip' + (open[i] || shown ? ' open' : '')} onClick={() => setOpen({ ...open, [i]: true })}>
+                  <b>{g.de}</b>{(open[i] || shown) ? <span> — {g.ru}</span> : <span className="muted"> — ?</span>}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+        {shown ? (
+          <div className="flash-ru">{ex.ru}</div>
+        ) : (
+          <button className="btn" onClick={() => setShown(true)}>🤔 Догадались? Показать перевод</button>
+        )}
+      </div>
+      <button className="btn primary wide" disabled={!shown} onClick={() => onResult({ ok: true, auto: true })}>{shown ? 'Понятно →' : 'Сначала подумайте, что значит фраза'}</button>
+    </div>
+  );
+}
+
+/* ---------- Памятка правила перед практикой ---------- */
+export function RuleCard({ ex, onResult }: P<'rule'>) {
+  const g = ex.lesson.grammar;
+  return (
+    <div className="ex">
+      <div className="kicker">Правило перед практикой</div>
+      <h2>📘 {g.title}</h2>
+      <div className="g-box">
+        {g.points.map((p, i) => <p key={i}><Md text={p} /></p>)}
+        {g.table && <div className="table-wrap"><table><tbody>{g.table.map((row, i) => <tr key={i}>{row.map((c, j) => (i === 0 ? <th key={j}>{c}</th> : <td key={j}>{c}</td>))}</tr>)}</tbody></table></div>}
+      </div>
+      <p className="muted">Дальше — предложения с пропусками на это правило. Если забудете, в каждом задании можно открыть подсказку с правилом (ответа там нет).</p>
+      <button className="btn primary wide" onClick={() => onResult({ ok: true, auto: true })}>К практике →</button>
+    </div>
+  );
+}
+
+/* ---------- Прочитать диалог перед игрой ---------- */
+export function ScriptCard({ ex, onResult }: P<'script'>) {
+  const [open, setOpen] = useState<Record<number, boolean>>({});
+  useEffect(() => setOpen({}), [ex]);
+  return (
+    <div className="ex dialog">
+      <div className="kicker">Прочитайте диалог: {ex.title}</div>
+      <p className="muted small">Прочитайте и послушайте. Попробуйте понять каждую реплику сами, перевод — по нажатию на «?». Потом вы сыграете роль 🟦 сами.</p>
+      <div className="chat-box">
+        {ex.lines.map((l, i) => (
+          <div key={i} className={'bubble ' + (l.who === 'A' ? 'them' : 'me')}>
+            <div className="script-line">
+              <span onClick={() => speak(l.de)}>{l.de}</span>
+              <button className="mini" onClick={() => speak(l.de)}>🔊</button>
+              {!open[i] && <button className="mini" onClick={() => setOpen({ ...open, [i]: true })}>?</button>}
+            </div>
+            {open[i] && <div className="tr">{l.ru}</div>}
+          </div>
+        ))}
+      </div>
+      <button className="btn primary wide" onClick={() => onResult({ ok: true, auto: true })}>Теперь моя роль →</button>
     </div>
   );
 }
