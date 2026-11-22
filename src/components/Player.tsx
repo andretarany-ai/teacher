@@ -40,7 +40,11 @@ export function Player({ title, items, onExit, onFinish, level }: {
     }
     if (r.key) srsAnswer(r.key, r.ok);
     if (!r.ok) {
-      if (r.correct && r.question) addMistake(r.correct, r.question);
+      if (r.correct && r.question) {
+        const cyr = /[а-яё]/i;
+        if (cyr.test(r.correct) && !cyr.test(r.question)) addMistake(r.question, r.correct);
+        else if (!cyr.test(r.correct)) addMistake(r.correct, r.question);
+      }
       if (!retried.current.has(ex) && ex.t !== 'match' && ex.t !== 'dialog') {
         retried.current.add(ex);
         setQueue((q) => [...q, ex]);

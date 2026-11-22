@@ -69,7 +69,7 @@ export function Flash({ ex, onResult }: P<'flash'>) {
   return (
     <div className="ex flash">
       <div className="kicker">Новое слово</div>
-      <div className="flash-card" style={{ borderColor: genderColor(w.g) }}>
+      <div className="flash-card" style={{ borderColor: w.g ? genderColor(w.g) : undefined }}>
         <div className="flash-de"><WordView w={w} size={1} /></div>
         {w.pl && <div className="muted">мн. ч.: {w.pl === '-' ? 'нет / так же' : w.pl}</div>}
         <div className="flash-ru">{w.ru}</div>
@@ -375,6 +375,7 @@ export function DialogEx({ ex, onResult }: P<'dialog'>) {
 
   const answer = (c: string) => {
     const line = ex.lines[pos];
+    if (!line || line.who !== 'B') return;
     if (c === line.de || similarity(c, line.de) > 0.8) {
       setWrong(null);
       setShown((s) => [...s, line]);
@@ -389,6 +390,7 @@ export function DialogEx({ ex, onResult }: P<'dialog'>) {
   const voice = () => {
     if (rec) { rec.stop(); return; }
     const line = ex.lines[pos];
+    if (!line) return;
     const l = listen({
       onResult: (t, alts, final) => {
         if (!final) return;
@@ -412,7 +414,7 @@ export function DialogEx({ ex, onResult }: P<'dialog'>) {
             {showRu && <div className="tr">{l.ru}</div>}
           </div>
         ))}
-        {choices && (
+        {choices && pos < ex.lines.length && ex.lines[pos].who === 'B' && (
           <div className="dialog-choices">
             <div className="muted">Ваш ответ ({ex.lines[pos].ru}):</div>
             {choices.map((c) => (

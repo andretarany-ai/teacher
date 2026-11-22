@@ -48,6 +48,7 @@ main.with-tabs { padding-bottom: 90px; }
 .btn.big { padding: 16px; font-size: 1.1rem; }
 .icon-btn { background: none; border: none; font-size: 1.3rem; color: var(--muted); padding: 6px 10px; }
 .card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; margin: 12px 0; display: block; width: 100%; text-align: left; }
+.card.center { text-align: center; }
 button.card { cursor: pointer; }
 .hero { background: linear-gradient(135deg, #1e293b, #3b2a0a); }
 @media (prefers-color-scheme: light) { .hero { background: linear-gradient(135deg, #fff7e6, #fff); } }
@@ -75,6 +76,7 @@ button.card { cursor: pointer; }
 .node.next { animation: pulse 1.6s infinite; }
 @keyframes pulse { 0%, 100% { outline: 0 solid color-mix(in srgb, var(--c) 50%, transparent); } 50% { outline: 8px solid color-mix(in srgb, var(--c) 25%, transparent); } }
 .node-label { min-width: 0; }
+.node-label.clickable { cursor: pointer; }
 .stars { color: var(--accent); letter-spacing: 2px; }
 .stars.big { font-size: 2.2rem; }
 
@@ -210,7 +212,8 @@ body.in-player .app { max-width: 680px; }
 .dialog-choices { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
 .bubble-tools { display: flex; gap: 4px; margin-top: 6px; }
 .bubble-tools button { background: var(--card2); border: none; border-radius: 8px; padding: 2px 8px; font-size: .8rem; }
-.chat-page { display: flex; flex-direction: column; height: 100vh; padding-top: 0; }
+.chat-page { display: flex; flex-direction: column; height: 100vh; height: 100dvh; padding-top: 0; overflow: hidden; }
+.chat-head .chat-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .chat-head { display: flex; align-items: center; gap: 8px; padding: 10px 0; border-bottom: 1px solid var(--line); }
 .chat-head > div { flex: 1; min-width: 0; }
 .chat-title { font-weight: 700; }

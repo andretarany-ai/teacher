@@ -80,7 +80,7 @@ ${words?.length ? 'По возможности используй слова и�
   };
 
   useEffect(() => { if (aiConfigured()) ask([]); return () => stopSpeaking(); }, []); // eslint-disable-line
-  useEffect(() => { bottom.current?.scrollIntoView({ behavior: 'smooth' }); }, [turns, busy, hint]);
+  useEffect(() => { const el = bottom.current?.parentElement; if (el) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' }); }, [turns, busy, hint]);
 
   const send = (text = input) => {
     const v = text.trim();
@@ -396,7 +396,7 @@ export function AskTutor({ onExit, context }: { onExit: () => void; context?: st
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
   const bottom = useRef<HTMLDivElement>(null);
-  useEffect(() => { bottom.current?.scrollIntoView({ behavior: 'smooth' }); }, [msgs, busy]);
+  useEffect(() => { const el = bottom.current?.parentElement; if (el) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' }); }, [msgs, busy]);
   const send = async (q = input) => {
     if (!q.trim() || busy) return;
     const m: ChatMsg[] = [...msgs, { role: 'user', content: q }];

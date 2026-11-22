@@ -42,8 +42,10 @@ export default function App() {
   const go = (r: Route) => { setRoute(r); window.scrollTo(0, 0); };
   useEffect(() => { document.body.classList.toggle('in-player', route.n === 'play'); }, [route.n]);
 
-  const startPlay = (title: string, items: Ex[], back: Route, lessonId?: string, full?: boolean, level?: string) =>
+  const startPlay = (title: string, items: Ex[], back: Route, lessonId?: string, full?: boolean, level?: string) => {
+    if (!items.length) { alert('Пока нет заданий для этого режима.'); return; }
     go({ n: 'play', title, items, back, lessonId, full, level });
+  };
 
   const finish = (r: Extract<Route, { n: 'play' }>, stats: RunStats) => {
     const acc = stats.total ? stats.correct / stats.total : 1;
@@ -171,7 +173,7 @@ function Home({ go }: { go: (r: Route) => void }) {
                         style={{ '--c': lv.color } as any} onClick={() => unlocked && go({ n: 'lesson', id: l.id })} disabled={!unlocked}>
                         <span className="node-emoji">{unlocked ? l.emoji : '🔒'}</span>
                       </button>
-                      <div className="node-label">
+                      <div className={'node-label' + (unlocked ? ' clickable' : '')} onClick={() => unlocked && go({ n: 'lesson', id: l.id })}>
                         <b>{l.title}</b>
                         <div className="muted small">{l.de}</div>
                         {pr?.done && <div className="stars">{'★'.repeat(pr.stars)}{'☆'.repeat(3 - pr.stars)}</div>}
