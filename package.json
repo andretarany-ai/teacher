@@ -1,0 +1,25 @@
+{
+  "name": "deutsch-weg",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Интерактивный курс немецкого языка A0 → B2 с ИИ-собеседником (Grok)",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "start": "node server.mjs",
+    "preview": "npm run build && node server.mjs",
+    "check": "node scripts/check-content.mjs"
+  },
+  "dependencies": {
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.3.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.8"
+  }
+}
