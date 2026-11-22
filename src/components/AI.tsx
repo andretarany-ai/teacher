@@ -58,8 +58,11 @@ export function Roleplay({ level, title, role, situation, goal, words, onExit }:
 Роль: ${role}. Ситуация: ${situation}. Цель ученика: ${goal}.
 Уровень ученика: ${level}. ${LEVEL_RULES[level] || LEVEL_RULES.A1}
 ${words?.length ? 'По возможности используй слова из урока: ' + words.slice(0, 20).join(', ') + '.' : ''}
-Всегда оставайся в роли, говори ТОЛЬКО по-немецки в поле reply, задавай встречные вопросы, чтобы разговор продолжался.
-Если в последней реплике ученика есть ошибка (грамматика, порядок слов, артикль, лексика), заполни correction: исправленный вариант и короткое объяснение по-русски. Если ошибок нет — correction = null. Мелкие ошибки пунктуации и регистра игнорируй.
+Ты одновременно персонаж и ОПЫТНЫЙ УЧИТЕЛЬ НЕМЕЦКОГО для русскоговорящего ученика. Реплика персонажа (поле reply) — всегда по-немецки, коротко, с одним встречным вопросом, чтобы ученик знал, что ответить.
+Если ученик написал по-русски или вставил русские слова — НЕ продолжай разговор по-русски: в correction дай, как это сказать по-немецки (corrected — полная немецкая фраза, explanation — короткое пояснение по-русски, например «"чай" — der Tee; после möchte нужен Akkusativ: einen»), а в reply по-немецки мягко попроси повторить фразу целиком.
+Если ученик задаёт вопрос о языке (грамматика, слово), коротко ответь в explanation поля correction по-русски с немецким примером (corrected можно оставить равным его фразе), а в reply продолжи сценку.
+Если ученик пишет «не знаю», «помоги», «?» — дай в suggestions две простые фразы, которые он может сказать, и подбодри его в reply.
+Если в последней реплике ученика есть ошибка (грамматика, порядок слов, артикль, падеж, форма глагола, лексика), заполни correction: исправленный вариант и короткое объяснение по-русски — какое правило нарушено. Если ошибок нет — correction = null. Мелкие ошибки пунктуации и регистра игнорируй.
 Отвечай строго JSON-объектом:
 {"reply":"реплика по-немецки","translation":"перевод реплики на русский","correction":null или {"corrected":"исправленная фраза ученика","explanation":"почему, по-русски"},"suggestions":[{"de":"возможный ответ ученика","ru":"перевод"},{"de":"...","ru":"..."}],"goal_done":true/false}`;
 
@@ -76,9 +79,9 @@ ${words?.length ? 'По возможности используй слова и�
       const r = await chatJson<any>(msgs, { temperature: 0.8, maxTokens: 600 });
       const turn: Turn = { role: 'assistant', de: String(r.reply || ''), ru: r.translation, suggestions: Array.isArray(r.suggestions) ? r.suggestions : [] };
       const updated = [...t];
-      if (r.correction && updated.length && updated[updated.length - 1].role === 'user' && r.correction.corrected) {
+      if (r.correction && updated.length && updated[updated.length - 1].role === 'user' && (r.correction.corrected || r.correction.explanation)) {
         const last = updated[updated.length - 1];
-        if (r.correction.corrected.trim() !== last.de.trim()) updated[updated.length - 1] = { ...last, correction: r.correction };
+        if (r.correction.corrected.trim() !== last.de.trim() || r.correction.explanation) updated[updated.length - 1] = { ...last, correction: r.correction };
       }
       if (r.goal_done) setGoalDone(true);
       setTurns([...updated, turn]);
@@ -155,7 +158,9 @@ ${words?.length ? 'По возможности используй слова и�
             </div>
             {t.correction && (
               <div className="correction">
-                ✏️ Лучше: <b>{t.correction.corrected}</b> <button className="audio-btn" onClick={() => speak(t.correction!.corrected)}>🔊</button>
+                {t.correction.corrected && t.correction.corrected.trim() !== t.de.trim()
+                  ? <>✏️ Лучше: <b>{t.correction.corrected}</b> <button className="audio-btn" onClick={() => speak(t.correction!.corrected)}>🔊</button></>
+                  : <>💡 Учитель:</>}
                 <div className="muted">{t.correction.explanation}</div>
               </div>
             )}

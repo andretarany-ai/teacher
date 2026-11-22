@@ -220,6 +220,18 @@ export async function startLive(instructions: string, h: LiveHandlers, opts: { g
     node.onended = () => { playing.delete(node); if (!playing.size && !closed) h.onStatus('listening'); };
   };
 
+  // Сначала основное (инструкции, голос, формат звука), потом дополнительное отдельным пакетом:
+  // если сервер отвергнет необязательное поле, роль учителя всё равно останется.
+  let greeted = false;
+  const greet = () => {
+    if (greeted) return;
+    greeted = true;
+    if (opts.greet) {
+      send({ type: 'conversation.item.create', item: { type: 'message', role: 'user', content: [{ type: 'input_text', text: opts.greet }] } });
+      send({ type: 'response.create' });
+      h.onStatus('thinking');
+    } else h.onStatus('listening');
+  };
   ws.onopen = () => {
     send({
       type: 'session.update',
@@ -228,17 +240,24 @@ export async function startLive(instructions: string, h: LiveHandlers, opts: { g
         voice: s.grokVoice || 'eve',
         turn_detection: { type: 'server_vad' },
         audio: {
-          input: { format: { type: 'audio/pcm', rate: RATE }, transcription: { model: 'grok-transcribe', language_hint: 'de', ...(opts.keyterms?.length ? { keyterms: opts.keyterms.slice(0, 100).filter((k) => k.length <= 50) } : {}) } },
-          output: { format: { type: 'audio/pcm', rate: RATE }, speed: Math.min(1.5, Math.max(0.7, s.speechRate)) },
+          input: { format: { type: 'audio/pcm', rate: RATE } },
+          output: { format: { type: 'audio/pcm', rate: RATE } },
         },
       },
     });
-    if (opts.greet) {
-      send({ type: 'conversation.item.create', item: { type: 'message', role: 'user', content: [{ type: 'input_text', text: opts.greet }] } });
-      send({ type: 'response.create' });
-      h.onStatus('thinking');
-    } else h.onStatus('listening');
+    // Распознавание без жёсткого языка: ученик может вставлять русские слова, и Grok должен их понять
+    send({
+      type: 'session.update',
+      session: {
+        audio: {
+          input: { format: { type: 'audio/pcm', rate: RATE }, transcription: { model: 'grok-transcribe', ...(opts.keyterms?.length ? { keyterms: opts.keyterms.slice(0, 100).filter((k) => k.length <= 50) } : {}) } },
+          output: { format: { type: 'audio/pcm', rate: RATE }, speed: Math.min(1.5, Math.max(0.7, s.speechRate * 0.95)) },
+        },
+      },
+    });
+    setTimeout(greet, 2500); // если session.updated не придёт
   };
+  let updatesSeen = 0;
 
   ws.onmessage = (ev) => {
     if (typeof ev.data !== 'string') return;
@@ -274,8 +293,16 @@ export async function startLive(instructions: string, h: LiveHandlers, opts: { g
       }
       case 'response.done':
         if (!playing.size) h.onStatus('listening'); break;
-      case 'error':
-        h.onStatus('error', m.error?.message || m.message || 'Ошибка голосового режима'); break;
+      case 'session.updated':
+        updatesSeen++;
+        if (updatesSeen >= 1) greet();
+        break;
+      case 'error': {
+        const msg = m.error?.message || m.message || 'Ошибка голосового режима';
+        // ошибка в дополнительных настройках не должна обрывать разговор
+        if (/session|transcri|keyterm|speed|param|field|invalid/i.test(msg) && ws.readyState === WebSocket.OPEN) { console.warn('Grok voice:', msg); greet(); break; }
+        h.onStatus('error', msg); break;
+      }
     }
   };
   ws.onerror = () => { if (!closed) h.onStatus('error', 'Не удалось подключиться к голосовому режиму Grok.'); };
