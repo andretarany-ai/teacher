@@ -11,7 +11,7 @@ export type Ex =
   | { t: 'build'; ru: string; answer: string; tokens: string[] }
   | { t: 'type'; title: string; prompt: string; audio?: string; answer: string[]; ru: string; hint?: string; key?: string }
   | { t: 'gap'; gap: Gap; rule?: Lesson['grammar'] }
-  | { t: 'phrase'; de: string; ru: string; gloss: { de: string; ru: string }[]; n: number; total: number }
+  | { t: 'phrase'; de: string; ru: string; n: number; total: number }
   | { t: 'rule'; lesson: Lesson }
   | { t: 'script'; title: string; lines: DialogLine[] }
   | { t: 'speak'; de: string; ru: string }
@@ -63,27 +63,10 @@ function listenType(p: { de: string; ru: string }): Ex {
   return { t: 'type', title: 'Напишите, что услышали', prompt: '', audio: p.de, answer: [p.de], ru: p.ru };
 }
 
-/** Слова урока, которые встречаются во фразе — мини-словарик для карточки фразы */
-function glossFor(de: string, lesson: Lesson): { de: string; ru: string }[] {
-  const toks = tokenize(de).map((t) => cleanTok(t).toLowerCase()).filter(Boolean);
-  const pool = [...lesson.words, ...LESSONS.filter((l) => l.index < lesson.index).flatMap((l) => l.words)];
-  const out: { de: string; ru: string }[] = [];
-  const seen = new Set<string>();
-  for (const t of toks) {
-    const w = pool.find((x) => {
-      const base = x.de.toLowerCase();
-      if (base.includes(' ')) return false;
-      return base === t || (base.length > 3 && (t.startsWith(base) || base.startsWith(t)) && Math.abs(base.length - t.length) <= 2);
-    });
-    if (w && !seen.has(w.full)) { seen.add(w.full); out.push({ de: w.full, ru: w.ru }); }
-  }
-  return out.slice(0, 6);
-}
-
 /**
  * Полный урок. Принцип: сначала показываем, потом спрашиваем.
  * Грамматика → слова блоками (карточки → пары → проверка) → фразы блоками
- * (карточки фраз со словариком → задания только по показанным фразам) →
+ * (карточка фразы: перевод + разбор каждого слова → задания только по показанным фразам) →
  * памятка по правилу → пропуски с подсказкой → повторение → чтение диалога → диалог.
  */
 export function buildLesson(lesson: Lesson): Ex[] {
@@ -105,7 +88,7 @@ export function buildLesson(lesson: Lesson): Ex[] {
   let k = 0;
   for (let i = 0; i < phrases.length; i += 3) {
     const chunk = phrases.slice(i, i + 3);
-    chunk.forEach((p, j) => out.push({ t: 'phrase', de: p.de, ru: p.ru, gloss: glossFor(p.de, lesson), n: i + j + 1, total: phrases.length }));
+    chunk.forEach((p, j) => out.push({ t: 'phrase', de: p.de, ru: p.ru, n: i + j + 1, total: phrases.length }));
     const tasks: Ex[] = chunk.map((p) => {
       const m = k++ % 3;
       return m === 0 ? listenPhraseMc(p, lesson) : m === 1 ? build(p, lesson) : { t: 'speak', de: p.de, ru: p.ru };

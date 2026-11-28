@@ -310,9 +310,6 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 details summary { cursor: pointer; margin: 8px 0; color: var(--muted); }
 
 .phrase-de { font-size: 1.7rem; font-weight: 800; line-height: 1.3; }
-.gloss-row { width: 100%; }
-.gloss-chip { font-size: .9rem; padding: 6px 10px; }
-.gloss-chip.open { border-color: var(--ok); }
 .rule-hint { background: var(--card); border: 1px dashed var(--line); border-radius: 12px; padding: 8px 12px; margin: 10px 0; }
 .rule-hint summary { color: var(--accent); font-weight: 600; margin: 0; }
 .script-line { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
@@ -320,3 +317,19 @@ details summary { cursor: pointer; margin: 8px 0; color: var(--muted); }
 .bubble.me .mini { background: rgba(255,255,255,.2); color: #fff; }
 .resume-box { display: flex; gap: 8px; flex-wrap: wrap; }
 .resume-box .btn { flex: 1; }
+
+.phrase-card { gap: 10px; }
+.gloss { width: 100%; text-align: left; }
+.idiom { background: color-mix(in srgb, var(--accent) 12%, var(--card)); border-radius: 10px; padding: 8px 10px; margin-bottom: 8px; font-size: .95rem; }
+.gloss-grid { display: flex; flex-wrap: wrap; gap: 6px; }
+.gloss-cell { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; background: var(--card2); border: 1px solid var(--line); border-radius: 10px; padding: 6px 9px; text-align: left; max-width: 100%; }
+.gloss-cell:hover { border-color: var(--accent); }
+.g-de { font-weight: 700; }
+.g-base { font-size: .75rem; color: var(--accent); }
+.g-ru { font-size: .82rem; color: var(--muted); }
+.gloss.compact { margin-top: 6px; color: var(--text); }
+.gloss.compact .gloss-cell { padding: 4px 7px; }
+.bubble.me .gloss.compact .gloss-cell { background: rgba(255,255,255,.15); border-color: rgba(255,255,255,.25); }
+.bubble.me .gloss.compact .g-ru, .bubble.me .gloss.compact .g-base { color: #dbeafe; }
+.bubble.me .idiom { color: var(--text); }
+.explain-box { width: 100%; text-align: left; background: var(--card2); border-radius: 12px; padding: 8px 12px; }

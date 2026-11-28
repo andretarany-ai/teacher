@@ -5,6 +5,7 @@ import { checkAnswer, norm, pick, shuffle, similarity, wordDiff } from '../lib/t
 import { listen, speak, sttSupported, type Listener } from '../lib/speech';
 import { AudioBtn, genderColor, Md, MdBlock, UmlautBar, WordView } from './ui';
 import { aiConfigured, chat, TUTOR_BASE } from '../lib/grok';
+import { glossPhrase } from '../lib/gloss';
 import { updateProgress } from '../lib/storage';
 
 export interface ExResult {
@@ -253,6 +254,12 @@ export function GapEx({ ex, onResult, locked }: P<'gap'>) {
         {g.before}<span className={'gap-slot' + (v ? ' filled' : '')}>{v || '____'}</span>{g.after}
       </div>
       <div className="muted center">{g.ru}</div>
+      {(g.before + g.after).trim().split(/\s+/).length > 1 && (
+        <details className="rule-hint">
+          <summary>📖 Слова в предложении (без ответа)</summary>
+          <GlossView de={(g.before + ' ' + g.after).replace(/\s+/g, ' ').trim()} compact />
+        </details>
+      )}
       {ex.rule && (
         <details className="rule-hint">
           <summary>💡 Подсказка: правило «{ex.rule.title}»</summary>
@@ -475,36 +482,80 @@ export function DialogEx({ ex, onResult }: P<'dialog'>) {
   );
 }
 
-/* ---------- Новая фраза: сначала догадаться, потом проверить ---------- */
+/* ---------- Пословный разбор фразы (общий для фраз и диалогов) ---------- */
+export function GlossView({ de, compact }: { de: string; compact?: boolean }) {
+  const g = useMemo(() => glossPhrase(de), [de]);
+  return (
+    <div className={'gloss' + (compact ? ' compact' : '')}>
+      {g.idioms.map((i) => (
+        <div key={i.de} className="idiom"><b>{i.de}</b> — {i.ru} <span className="muted small">(устойчивое выражение)</span></div>
+      ))}
+      <div className="gloss-grid">
+        {g.words.map((w, i) => (
+          <button key={i} className="gloss-cell" onClick={() => speak(w.base || w.de)} title="Прослушать">
+            <span className="g-de">{w.de}</span>
+            {w.base && w.base.toLowerCase() !== w.de.toLowerCase() && <span className="g-base">← {w.base}</span>}
+            <span className="g-ru">{w.ru || '—'}</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+const explainCache: Record<string, string> = (() => { try { return JSON.parse(localStorage.getItem('dw.explain.v1') || '{}'); } catch { return {}; } })();
+
+/* ---------- Новая фраза: всё объясняем сразу, думать — в заданиях после ---------- */
 export function PhraseCard({ ex, onResult }: P<'phrase'>) {
-  const [shown, setShown] = useState(false);
-  const [open, setOpen] = useState<Record<number, boolean>>({});
-  useEffect(() => { setShown(false); setOpen({}); }, [ex]);
+  const [more, setMore] = useState<string | null>(explainCache[ex.de] || null);
+  const [busy, setBusy] = useState(false);
+  const [said, setSaid] = useState<null | boolean>(null);
+  const [rec, setRec] = useState<Listener | null>(null);
+  useEffect(() => { setMore(explainCache[ex.de] || null); setSaid(null); }, [ex]);
+  const explain = async () => {
+    setBusy(true);
+    try {
+      const out = await chat([
+        { role: 'system', content: TUTOR_BASE + ' Объясняй для новичка, очень коротко: 3–5 пунктов.' },
+        { role: 'user', content: `Разбери немецкую фразу «${ex.de}» (перевод: «${ex.ru}»): почему слова стоят в таком порядке, какие формы глаголов/артикли/падежи здесь использованы и почему, что важно запомнить. Дай 1–2 похожие фразы с переводом по образцу.` },
+      ], { temperature: 0.3, maxTokens: 600 });
+      explainCache[ex.de] = out;
+      try { localStorage.setItem('dw.explain.v1', JSON.stringify(explainCache)); } catch {}
+      setMore(out);
+    } catch (e: any) { setMore('⚠️ ' + e.message); }
+    setBusy(false);
+  };
+  const repeat = () => {
+    if (rec) { rec.stop(); return; }
+    setSaid(null);
+    const l = listen({
+      onResult: (t, alts, final) => { if (final) setSaid([t, ...alts].some((x) => similarity(x, ex.de) > 0.75)); },
+      onEnd: () => setRec(null),
+      onError: () => setRec(null),
+    });
+    setRec(l);
+  };
   return (
     <div className="ex flash">
       <div className="kicker">Новая фраза {ex.n}/{ex.total}</div>
-      <div className="flash-card">
+      <div className="flash-card phrase-card">
         <div className="phrase-de">{ex.de}</div>
+        <div className="flash-ru">{ex.ru}</div>
         <AudioBtn text={ex.de} auto big />
-        {ex.gloss.length > 0 && (
-          <div className="gloss-row">
-            <div className="muted small">{shown ? 'Слова во фразе:' : 'Знакомые слова — вспомните перевод, потом нажмите:'}</div>
-            <div className="bank">
-              {ex.gloss.map((g, i) => (
-                <button key={i} className={'chip gloss-chip' + (open[i] || shown ? ' open' : '')} onClick={() => setOpen({ ...open, [i]: true })}>
-                  <b>{g.de}</b>{(open[i] || shown) ? <span> — {g.ru}</span> : <span className="muted"> — ?</span>}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-        {shown ? (
-          <div className="flash-ru">{ex.ru}</div>
-        ) : (
-          <button className="btn" onClick={() => setShown(true)}>🤔 Догадались? Показать перевод</button>
-        )}
+        <div className="muted small">Разбор по словам (нажмите на слово, чтобы услышать):</div>
+        <GlossView de={ex.de} />
+        {more && <div className="explain-box"><MdBlock text={more} /></div>}
+        <div className="row-btns center">
+          {!more && aiConfigured() && <button className="btn small" disabled={busy} onClick={explain}>{busy ? 'Разбираю…' : '🤖 Подробнее: почему так?'}</button>}
+          {sttSupported() && (
+            <button className={'btn small' + (rec ? ' rec' : '')} onClick={repeat}>
+              {rec ? '⏺ Слушаю…' : '🎤 Повторить вслух'} {said === true && '✅'} {said === false && '🔁'}
+            </button>
+          )}
+        </div>
       </div>
-      <button className="btn primary wide" disabled={!shown} onClick={() => onResult({ ok: true, auto: true })}>{shown ? 'Понятно →' : 'Сначала подумайте, что значит фраза'}</button>
+      <p className="muted small center">Запомните фразу — дальше будут задания на неё.</p>
+      <button className="btn primary wide" onClick={() => onResult({ ok: true, auto: true })}>Понятно →</button>
     </div>
   );
 }
@@ -528,21 +579,26 @@ export function RuleCard({ ex, onResult }: P<'rule'>) {
 
 /* ---------- Прочитать диалог перед игрой ---------- */
 export function ScriptCard({ ex, onResult }: P<'script'>) {
+  const [hideRu, setHideRu] = useState(false);
   const [open, setOpen] = useState<Record<number, boolean>>({});
-  useEffect(() => setOpen({}), [ex]);
+  const [words, setWords] = useState<Record<number, boolean>>({});
+  useEffect(() => { setOpen({}); setWords({}); }, [ex]);
   return (
     <div className="ex dialog">
       <div className="kicker">Прочитайте диалог: {ex.title}</div>
-      <p className="muted small">Прочитайте и послушайте. Попробуйте понять каждую реплику сами, перевод — по нажатию на «?». Потом вы сыграете роль 🟦 сами.</p>
+      <p className="muted small">Прочитайте и послушайте каждую реплику. 📖 — разбор по словам. Потом вы сыграете роль справа (синие реплики) сами.</p>
+      <label className="toggle"><input type="checkbox" checked={hideRu} onChange={(e) => { setHideRu(e.target.checked); setOpen({}); }} /> Скрыть перевод — проверить себя</label>
       <div className="chat-box">
         {ex.lines.map((l, i) => (
           <div key={i} className={'bubble ' + (l.who === 'A' ? 'them' : 'me')}>
             <div className="script-line">
               <span onClick={() => speak(l.de)}>{l.de}</span>
               <button className="mini" onClick={() => speak(l.de)}>🔊</button>
-              {!open[i] && <button className="mini" onClick={() => setOpen({ ...open, [i]: true })}>?</button>}
+              <button className="mini" onClick={() => setWords({ ...words, [i]: !words[i] })}>📖</button>
+              {hideRu && !open[i] && <button className="mini" onClick={() => setOpen({ ...open, [i]: true })}>перевод</button>}
             </div>
-            {open[i] && <div className="tr">{l.ru}</div>}
+            {(!hideRu || open[i]) && <div className="tr">{l.ru}</div>}
+            {words[i] && <GlossView de={l.de} compact />}
           </div>
         ))}
       </div>
